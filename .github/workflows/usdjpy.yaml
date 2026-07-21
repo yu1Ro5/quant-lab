@@ -7,6 +7,9 @@ on:
 
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   run:
     runs-on: ubuntu-latest
@@ -29,3 +32,22 @@ jobs:
 
       - name: Run script
         run: uv run python main.py
+
+      - name: Persist CSV history
+        run: |
+          if [ ! -f data/usd_jpy.csv ]; then
+            echo "No CSV history file generated."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/usd_jpy.csv
+
+          if git diff --cached --quiet; then
+            echo "No CSV history changes to commit."
+            exit 0
+          fi
+
+          git commit -m "Update USD/JPY rate history"
+          git push
