@@ -34,6 +34,7 @@ jobs:
         run: uv run python main.py
 
       - name: Persist CSV history
+        if: ${{ always() }}
         run: |
           if [ ! -f data/usd_jpy.csv ]; then
             echo "No CSV history file generated."
