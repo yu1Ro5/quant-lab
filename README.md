@@ -35,3 +35,13 @@ python main.py
 ```
 
 If either environment variable is not set, the script prints the exchange rate and skips the Slack notification.
+
+## Tests and CI
+
+Run the test suite locally with:
+
+```bash
+uv run python -m unittest discover -v
+```
+
+GitHub Actions runs the same test suite for pull requests targeting `main`, pushes to `main`, and manual workflow runs. The CI workflow uses Python 3.12 and installs the dependencies locked in `uv.lock`.
