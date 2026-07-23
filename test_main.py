@@ -4,14 +4,14 @@ from decimal import Decimal
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, call, patch
 
 import requests
 
 import main
 
 
-def ticker_payload(*, status="OPEN", bid="161.650", ask="161.670"):
+def ticker_payload(*, bid="161.650", ask="161.670"):
     return {
         "status": 0,
         "data": [
@@ -21,10 +21,20 @@ def ticker_payload(*, status="OPEN", bid="161.650", ask="161.670"):
                 "bid": bid,
                 "ask": ask,
                 "timestamp": "2026-06-26T15:30:00.123Z",
-                "status": status,
             },
         ],
     }
+
+
+def api_responses(*, market_status="OPEN", bid="161.650", ask="161.670"):
+    ticker_response = Mock()
+    ticker_response.json.return_value = ticker_payload(bid=bid, ask=ask)
+    status_response = Mock()
+    status_response.json.return_value = {
+        "status": 0,
+        "data": {"status": market_status},
+    }
+    return ticker_response, status_response
 
 
 def quote(rate_date="2026-06-27"):
@@ -42,11 +52,18 @@ def quote(rate_date="2026-06-27"):
 class TickerTests(unittest.TestCase):
     @patch("main.requests.get")
     def test_gets_usd_jpy_and_calculates_decimal_values(self, get):
-        response = get.return_value
-        response.json.return_value = ticker_payload()
+        ticker_response, status_response = api_responses()
+        get.side_effect = [ticker_response, status_response]
         result = main.get_usd_jpy()
-        get.assert_called_once_with(main.TICKER_URL, timeout=10)
-        response.raise_for_status.assert_called_once()
+        self.assertEqual(
+            get.call_args_list,
+            [
+                call(main.TICKER_URL, timeout=10),
+                call(main.STATUS_URL, timeout=10),
+            ],
+        )
+        ticker_response.raise_for_status.assert_called_once()
+        status_response.raise_for_status.assert_called_once()
         self.assertEqual(result.bid, Decimal("161.650"))
         self.assertEqual(result.ask, Decimal("161.670"))
         self.assertEqual(result.rate, Decimal("161.660"))
@@ -57,12 +74,20 @@ class TickerTests(unittest.TestCase):
 
     @patch("main.requests.get")
     def test_supports_open_and_close(self, get):
-        get.return_value.json.side_effect = [
-            ticker_payload(status="OPEN"),
-            ticker_payload(status="CLOSE"),
+        get.side_effect = [
+            *api_responses(market_status="OPEN"),
+            *api_responses(market_status="CLOSE"),
         ]
         self.assertEqual(main.get_usd_jpy().market_status, "OPEN")
         self.assertEqual(main.get_usd_jpy().market_status, "CLOSE")
+
+    @patch("main.requests.get")
+    def test_rejects_invalid_status_endpoint_response(self, get):
+        ticker_response, status_response = api_responses()
+        status_response.json.return_value = {"status": 0, "data": {}}
+        get.side_effect = [ticker_response, status_response]
+        with self.assertRaisesRegex(ValueError, "invalid market status"):
+            main.get_usd_jpy()
 
     @patch("main.requests.get")
     def test_rejects_api_error_and_missing_pair(self, get):

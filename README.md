@@ -2,7 +2,7 @@
 
 This script fetches the current USD/JPY quote from the GMO Coin Foreign Exchange FX Public API, prints it, stores it in CSV, and optionally sends a Slack notification.
 
-The public ticker endpoint is `GET https://forex-api.coin.z.com/public/v1/ticker` and does not require an API key or secret. The script selects `USD_JPY` by its symbol rather than relying on its position in the returned list.
+The public ticker endpoint is `GET https://forex-api.coin.z.com/public/v1/ticker` and does not require an API key or secret. The script selects `USD_JPY` by its symbol rather than relying on its position in the returned list. Market state is fetched separately from `GET https://forex-api.coin.z.com/public/v1/status`, because ticker records contain prices but no `OPEN`/`CLOSE` field.
 
 ## Usage
 

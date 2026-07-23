@@ -10,6 +10,7 @@ import requests
 from slack_sdk import WebClient
 
 TICKER_URL = "https://forex-api.coin.z.com/public/v1/ticker"
+STATUS_URL = "https://forex-api.coin.z.com/public/v1/status"
 RATE_HISTORY_COLUMNS = [
     "fetched_at",
     "rate_date",
@@ -75,10 +76,20 @@ def get_usd_jpy() -> UsdJpyQuote:
     bid = _parse_price(ticker, "bid")
     ask = _parse_price(ticker, "ask")
     timestamp = _parse_timestamp(ticker.get("timestamp"))
-    market_status = ticker.get("status")
+
+    status_response = requests.get(STATUS_URL, timeout=10)
+    status_response.raise_for_status()
+    status_payload = status_response.json()
+    if status_payload.get("status") != 0:
+        raise ValueError(
+            f"GMO Coin status API returned an error status: "
+            f"{status_payload.get('status')!r}"
+        )
+    status_data = status_payload.get("data")
+    market_status = status_data.get("status") if isinstance(status_data, dict) else None
     if market_status not in {"OPEN", "CLOSE"}:
         raise ValueError(
-            f"USD_JPY ticker has an invalid market status: {market_status!r}"
+            f"GMO Coin status API has an invalid market status: {market_status!r}"
         )
 
     return UsdJpyQuote(
