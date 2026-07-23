@@ -1,106 +1,191 @@
 import csv
 import os
+from dataclasses import dataclass
 from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import requests
+from slack_sdk import WebClient
 
-try:
-    from slack_sdk import WebClient
-except ImportError:
-    WebClient = None
-
-RATE_HISTORY_COLUMNS = ["fetched_at", "rate_date", "rate"]
+TICKER_URL = "https://forex-api.coin.z.com/public/v1/ticker"
+STATUS_URL = "https://forex-api.coin.z.com/public/v1/status"
+RATE_HISTORY_COLUMNS = [
+    "fetched_at",
+    "rate_date",
+    "rate",
+    "bid",
+    "ask",
+    "spread",
+    "source_timestamp",
+    "market_status",
+]
 DEFAULT_RATE_HISTORY_PATH = Path("data/usd_jpy.csv")
+JST = ZoneInfo("Asia/Tokyo")
 
 
-def get_usd_jpy() -> tuple[float, str]:
-    url = "https://api.frankfurter.dev/v1/latest?from=USD&to=JPY"
+@dataclass(frozen=True)
+class UsdJpyQuote:
+    bid: Decimal
+    ask: Decimal
+    rate: Decimal
+    spread: Decimal
+    source_timestamp: datetime
+    rate_date: str
+    market_status: str
 
+
+def _parse_timestamp(value: object) -> datetime:
+    if not isinstance(value, str):
+        raise ValueError("USD_JPY ticker is missing a valid timestamp.")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(f"USD_JPY ticker has an invalid timestamp: {value!r}") from exc
+    if parsed.tzinfo is None:
+        raise ValueError("USD_JPY ticker timestamp must include a UTC offset.")
+    return parsed.astimezone(timezone.utc)
+
+
+def _parse_price(ticker: dict[str, object], field: str) -> Decimal:
+    value = ticker.get(field)
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, ValueError) as exc:
+        raise ValueError(f"USD_JPY ticker has an invalid {field}: {value!r}") from exc
+
+
+def _get_api_payload(url: str) -> dict[str, object]:
     response = requests.get(url, timeout=10)
     response.raise_for_status()
-
-    data = response.json()
-
-    return data["rates"]["JPY"], data["date"]
-
-
-def build_notification_message(rate: float, date: str) -> str:
-    return f"USD/JPY rate: {rate} as of {date}"
+    payload = response.json()
+    if payload.get("status") != 0:
+        raise ValueError(
+            f"GMO Coin API returned an error status: {payload.get('status')!r}"
+        )
+    return payload
 
 
-def _rate_date_already_saved(csv_path: Path, rate_date: str) -> bool:
+def get_usd_jpy() -> UsdJpyQuote:
+    ticker_payload = _get_api_payload(TICKER_URL)
+    status_payload = _get_api_payload(STATUS_URL)
+
+    ticker = next(
+        (
+            item
+            for item in ticker_payload.get("data", [])
+            if item.get("symbol") == "USD_JPY"
+        ),
+        None,
+    )
+    if ticker is None:
+        raise ValueError("GMO Coin API response does not contain USD_JPY.")
+
+    bid = _parse_price(ticker, "bid")
+    ask = _parse_price(ticker, "ask")
+    timestamp = _parse_timestamp(ticker.get("timestamp"))
+    status_data = status_payload.get("data")
+    market_status = status_data.get("status") if isinstance(status_data, dict) else None
+    if market_status not in {"OPEN", "CLOSE"}:
+        raise ValueError(
+            f"GMO Coin API has an invalid market status: {market_status!r}"
+        )
+
+    return UsdJpyQuote(
+        bid=bid,
+        ask=ask,
+        rate=(bid + ask) / 2,
+        spread=ask - bid,
+        source_timestamp=timestamp,
+        rate_date=timestamp.astimezone(JST).date().isoformat(),
+        market_status=market_status,
+    )
+
+
+def build_notification_message(quote: UsdJpyQuote) -> str:
+    return (
+        f"USD/JPY ({quote.rate_date}) | bid: {quote.bid} | ask: {quote.ask} | "
+        f"mid: {quote.rate} | spread: {quote.spread} | market: {quote.market_status}"
+    )
+
+
+def _read_history(csv_path: Path) -> list[dict[str, str]]:
     if not csv_path.exists() or csv_path.stat().st_size == 0:
-        return False
-
+        return []
     with csv_path.open(newline="", encoding="utf-8") as file:
-        reader = csv.DictReader(file)
-        return any(row.get("rate_date") == rate_date for row in reader)
+        return list(csv.DictReader(file))
 
 
 def save_usd_jpy_rate(
-    rate: float,
-    rate_date: str,
+    quote: UsdJpyQuote,
     csv_path: str | Path = DEFAULT_RATE_HISTORY_PATH,
     fetched_at: datetime | None = None,
 ) -> bool:
     path = Path(csv_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-
-    if _rate_date_already_saved(path, rate_date):
+    rows = _read_history(path)
+    if any(row.get("rate_date") == quote.rate_date for row in rows):
         return False
 
-    fetched_at = fetched_at or datetime.now(timezone.utc)
-    should_write_header = not path.exists() or path.stat().st_size == 0
+    fetched_at = (fetched_at or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    rows.append(
+        {
+            "fetched_at": fetched_at.isoformat(timespec="seconds"),
+            "rate_date": quote.rate_date,
+            "rate": str(quote.rate),
+            "bid": str(quote.bid),
+            "ask": str(quote.ask),
+            "spread": str(quote.spread),
+            "source_timestamp": quote.source_timestamp.isoformat(
+                timespec="milliseconds"
+            ).replace("+00:00", "Z"),
+            "market_status": quote.market_status,
+        }
+    )
 
-    with path.open("a", newline="", encoding="utf-8") as file:
-        writer = csv.DictWriter(file, fieldnames=RATE_HISTORY_COLUMNS)
-        if should_write_header:
-            writer.writeheader()
-        writer.writerow(
-            {
-                "fetched_at": fetched_at.isoformat(timespec="seconds"),
-                "rate_date": rate_date,
-                "rate": rate,
-            }
+    # Rewriting also migrates legacy three-column files while retaining every row.
+    with path.open("w", newline="", encoding="utf-8") as file:
+        writer = csv.DictWriter(
+            file, fieldnames=RATE_HISTORY_COLUMNS, extrasaction="ignore"
         )
-
+        writer.writeheader()
+        writer.writerows(rows)
     return True
 
 
-def send_slack_notification(message: str, token: str | None = None, channel: str | None = None) -> bool:
+def send_slack_notification(
+    message: str, token: str | None = None, channel: str | None = None
+) -> bool:
     token = token or os.getenv("SLACK_BOT_TOKEN")
     channel = channel or os.getenv("SLACK_CHANNEL")
     if not token or not channel:
         print("Slack credentials not set; skipping notification.")
         return False
-    if WebClient is None:
-        raise RuntimeError("slack-sdk is required to send Slack notifications.")
 
     client = WebClient(token=token)
     response = client.chat_postMessage(channel=channel, text=message)
     if not response.get("ok", False):
         raise RuntimeError(f"Slack notification failed: {response}")
-
     print("Slack notification sent.")
     return True
 
 
 def main() -> None:
-    rate, date = get_usd_jpy()
-
+    quote = get_usd_jpy()
     print("=== USD/JPY ===")
-    print(f"Rate : {rate}")
-    print(f"Date : {date}")
+    print(f"Bid    : {quote.bid}")
+    print(f"Ask    : {quote.ask}")
+    print(f"Mid    : {quote.rate}")
+    print(f"Spread : {quote.spread}")
+    print(f"Market : {quote.market_status}")
+    print(f"Date   : {quote.rate_date}")
 
-    saved = save_usd_jpy_rate(rate, date)
-    if saved:
-        print(f"CSV  : saved to {DEFAULT_RATE_HISTORY_PATH}")
+    if save_usd_jpy_rate(quote):
+        print(f"CSV    : saved to {DEFAULT_RATE_HISTORY_PATH}")
     else:
-        print(f"CSV  : {date} is already saved; skipping")
-
-    message = build_notification_message(rate, date)
-    send_slack_notification(message)
+        print(f"CSV    : {quote.rate_date} is already saved; skipping")
+    send_slack_notification(build_notification_message(quote))
 
 
 if __name__ == "__main__":
