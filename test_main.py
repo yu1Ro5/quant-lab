@@ -1,109 +1,154 @@
 import csv
 from datetime import datetime, timezone
-import os
+from decimal import Decimal
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
-from contextlib import redirect_stdout
-from io import StringIO
 from unittest.mock import patch
+
+import requests
 
 import main
 
 
-class CsvHistoryTests(unittest.TestCase):
-    def test_save_usd_jpy_rate_creates_csv_with_header_and_row(self) -> None:
-        with TemporaryDirectory() as temp_dir:
-            csv_path = Path(temp_dir) / "data" / "usd_jpy.csv"
-            fetched_at = datetime(2026, 6, 26, 12, 30, tzinfo=timezone.utc)
+def ticker_payload(*, status="OPEN", bid="161.650", ask="161.670"):
+    return {
+        "status": 0,
+        "data": [
+            {"symbol": "EUR_USD", "bid": "1.1", "ask": "1.2"},
+            {
+                "symbol": "USD_JPY",
+                "bid": bid,
+                "ask": ask,
+                "timestamp": "2026-06-26T15:30:00.123Z",
+                "status": status,
+            },
+        ],
+    }
 
-            saved = main.save_usd_jpy_rate(
-                rate=161.65,
-                rate_date="2026-06-26",
-                csv_path=csv_path,
-                fetched_at=fetched_at,
-            )
 
-            self.assertTrue(saved)
-            self.assertTrue(csv_path.exists())
-            with csv_path.open(newline="", encoding="utf-8") as file:
-                rows = list(csv.DictReader(file))
+def quote(rate_date="2026-06-27"):
+    return main.UsdJpyQuote(
+        bid=Decimal("161.650"),
+        ask=Decimal("161.670"),
+        rate=Decimal("161.660"),
+        spread=Decimal("0.020"),
+        source_timestamp=datetime(2026, 6, 26, 15, 30, 0, 123000, tzinfo=timezone.utc),
+        rate_date=rate_date,
+        market_status="OPEN",
+    )
 
+
+class TickerTests(unittest.TestCase):
+    @patch("main.requests.get")
+    def test_gets_usd_jpy_and_calculates_decimal_values(self, get):
+        response = get.return_value
+        response.json.return_value = ticker_payload()
+        result = main.get_usd_jpy()
+        get.assert_called_once_with(main.TICKER_URL, timeout=10)
+        response.raise_for_status.assert_called_once()
+        self.assertEqual(result.bid, Decimal("161.650"))
+        self.assertEqual(result.ask, Decimal("161.670"))
+        self.assertEqual(result.rate, Decimal("161.660"))
+        self.assertEqual(result.spread, Decimal("0.020"))
         self.assertEqual(
-            rows,
-            [
-                {
-                    "fetched_at": "2026-06-26T12:30:00+00:00",
-                    "rate_date": "2026-06-26",
-                    "rate": "161.65",
-                }
-            ],
+            result.rate_date, "2026-06-27"
+        )  # UTC timestamp converted to JST
+
+    @patch("main.requests.get")
+    def test_supports_open_and_close(self, get):
+        get.return_value.json.side_effect = [
+            ticker_payload(status="OPEN"),
+            ticker_payload(status="CLOSE"),
+        ]
+        self.assertEqual(main.get_usd_jpy().market_status, "OPEN")
+        self.assertEqual(main.get_usd_jpy().market_status, "CLOSE")
+
+    @patch("main.requests.get")
+    def test_rejects_api_error_and_missing_pair(self, get):
+        get.return_value.json.side_effect = [
+            {"status": 7, "data": []},
+            {"status": 0, "data": []},
+        ]
+        with self.assertRaisesRegex(ValueError, "error status"):
+            main.get_usd_jpy()
+        with self.assertRaisesRegex(ValueError, "does not contain USD_JPY"):
+            main.get_usd_jpy()
+
+    @patch("main.requests.get")
+    def test_rejects_missing_or_invalid_prices(self, get):
+        get.return_value.json.side_effect = [
+            ticker_payload(bid=None),
+            ticker_payload(ask="invalid"),
+        ]
+        with self.assertRaisesRegex(ValueError, "invalid bid"):
+            main.get_usd_jpy()
+        with self.assertRaisesRegex(ValueError, "invalid ask"):
+            main.get_usd_jpy()
+
+    @patch("main.requests.get", side_effect=requests.Timeout("timed out"))
+    def test_propagates_timeout(self, get):
+        with self.assertRaises(requests.Timeout):
+            main.get_usd_jpy()
+
+    @patch("main.requests.get")
+    def test_propagates_http_error(self, get):
+        get.return_value.raise_for_status.side_effect = requests.HTTPError(
+            "bad response"
         )
+        with self.assertRaises(requests.HTTPError):
+            main.get_usd_jpy()
 
-    def test_save_usd_jpy_rate_skips_existing_rate_date(self) -> None:
-        with TemporaryDirectory() as temp_dir:
-            csv_path = Path(temp_dir) / "usd_jpy.csv"
-            first_saved = main.save_usd_jpy_rate(
-                rate=161.65,
-                rate_date="2026-06-26",
-                csv_path=csv_path,
-                fetched_at=datetime(2026, 6, 26, 12, 30, tzinfo=timezone.utc),
+
+class CsvHistoryTests(unittest.TestCase):
+    def test_migrates_legacy_csv_without_losing_data(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "usd_jpy.csv"
+            path.write_text(
+                "fetched_at,rate_date,rate\nold,2026-06-26,160.0\n", encoding="utf-8"
             )
-            second_saved = main.save_usd_jpy_rate(
-                rate=162.75,
-                rate_date="2026-06-26",
-                csv_path=csv_path,
-                fetched_at=datetime(2026, 6, 26, 13, 30, tzinfo=timezone.utc),
+            saved = main.save_usd_jpy_rate(
+                quote(), path, datetime(2026, 6, 27, tzinfo=timezone.utc)
             )
+            with path.open(newline="", encoding="utf-8") as file:
+                reader = csv.DictReader(file)
+                rows = list(reader)
+                fields = reader.fieldnames
+        self.assertTrue(saved)
+        self.assertEqual(fields, main.RATE_HISTORY_COLUMNS)
+        self.assertEqual(rows[0]["rate"], "160.0")
+        self.assertEqual(rows[0]["bid"], "")
+        self.assertEqual(rows[1]["bid"], "161.650")
+        self.assertEqual(rows[1]["source_timestamp"], "2026-06-26T15:30:00.123Z")
 
-            with csv_path.open(newline="", encoding="utf-8") as file:
-                rows = list(csv.DictReader(file))
+    def test_skips_duplicate_rate_date(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "usd_jpy.csv"
+            self.assertTrue(main.save_usd_jpy_rate(quote(), path))
+            self.assertFalse(main.save_usd_jpy_rate(quote(), path))
+            with path.open(newline="", encoding="utf-8") as file:
+                self.assertEqual(len(list(csv.DictReader(file))), 1)
 
-        self.assertTrue(first_saved)
-        self.assertFalse(second_saved)
-        self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0]["rate"], "161.65")
 
-
-class SlackNotificationTests(unittest.TestCase):
-    def test_build_notification_message(self) -> None:
-        message = main.build_notification_message(161.65, "2026-06-26")
-        self.assertEqual(message, "USD/JPY rate: 161.65 as of 2026-06-26")
-
-    def test_send_slack_notification_skips_without_credentials(self) -> None:
-        buffer = StringIO()
-        with patch.dict(os.environ, {}, clear=True), redirect_stdout(buffer):
-            result = main.send_slack_notification("hello")
-
-        self.assertFalse(result)
-        self.assertIn("Slack credentials not set; skipping notification.", buffer.getvalue())
-
-    def test_send_slack_notification_posts_when_credentials_are_provided(self) -> None:
-        with patch("main.WebClient") as mock_client_cls:
-            mock_client = mock_client_cls.return_value
-            mock_client.chat_postMessage.return_value = {"ok": True}
-            with patch.dict(
-                os.environ,
-                {"SLACK_BOT_TOKEN": "xoxb-test", "SLACK_CHANNEL": "#alerts"},
-                clear=True,
-            ):
-                result = main.send_slack_notification("hello")
-
-        self.assertTrue(result)
-        mock_client_cls.assert_called_once_with(token="xoxb-test")
-        mock_client.chat_postMessage.assert_called_once_with(channel="#alerts", text="hello")
-
-    def test_send_slack_notification_requires_sdk_when_credentials_are_provided(self) -> None:
-        with (
-            patch("main.WebClient", None),
-            patch.dict(
-                os.environ,
-                {"SLACK_BOT_TOKEN": "xoxb-test", "SLACK_CHANNEL": "#alerts"},
-                clear=True,
-            ),
+class NotificationTests(unittest.TestCase):
+    def test_message_contains_quote_details(self):
+        message = main.build_notification_message(quote())
+        for value in (
+            "bid: 161.650",
+            "ask: 161.670",
+            "mid: 161.660",
+            "spread: 0.020",
+            "market: OPEN",
         ):
-            with self.assertRaisesRegex(RuntimeError, "slack-sdk is required"):
-                main.send_slack_notification("hello")
+            self.assertIn(value, message)
+
+    @patch("main.WebClient")
+    def test_posts_to_slack(self, client_class):
+        client_class.return_value.chat_postMessage.return_value = {"ok": True}
+        self.assertTrue(main.send_slack_notification("hello", "token", "channel"))
+        client_class.return_value.chat_postMessage.assert_called_once_with(
+            channel="channel", text="hello"
+        )
 
 
 if __name__ == "__main__":

@@ -1,6 +1,8 @@
 # quant-lab
 
-This script fetches the current USD/JPY exchange rate, prints it, stores it in CSV, and optionally sends a Slack notification.
+This script fetches the current USD/JPY quote from the GMO Coin Foreign Exchange FX Public API, prints it, stores it in CSV, and optionally sends a Slack notification.
+
+The public ticker endpoint is `GET https://forex-api.coin.z.com/public/v1/ticker` and does not require an API key or secret. The script selects `USD_JPY` by its symbol rather than relying on its position in the returned list.
 
 ## Usage
 
@@ -22,7 +24,14 @@ The CSV file is stored at `data/usd_jpy.csv` with the following columns:
 | --- | --- |
 | `fetched_at` | UTC timestamp when the rate was fetched |
 | `rate_date` | Rate date returned by the exchange-rate API |
-| `rate` | USD/JPY exchange rate |
+| `rate` | Mid price, calculated as `(bid + ask) / 2` |
+| `bid` | Current sell price |
+| `ask` | Current buy price |
+| `spread` | Bid/ask spread, calculated as `ask - bid` |
+| `source_timestamp` | UTC timestamp returned by the GMO Coin API |
+| `market_status` | Market state (`OPEN` or `CLOSE`) |
+
+Prices and derived values are calculated with decimal arithmetic. `rate_date` is the API timestamp's date after conversion to Japan Standard Time, while `fetched_at` remains the time the script ran in UTC. Existing three-column CSV files are upgraded automatically when a new row is saved, and their existing data is retained.
 
 ## Slack notification
 
