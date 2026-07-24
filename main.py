@@ -185,6 +185,13 @@ def _format_change_value(value: Decimal) -> str:
     return f"{rounded:+.2f}"
 
 
+def _format_alert_threshold(value: Decimal) -> str:
+    rounded = f"{value:.2f}"
+    if rounded == "0.00":
+        return format(value, "f")
+    return rounded
+
+
 def build_notification_message(
     ticker: UsdJpyQuote,
     change: RateChange | None,
@@ -210,7 +217,7 @@ def build_notification_message(
         return message
     return (
         f"⚠️ USD/JPY変動アラート\n{message}\n"
-        f"設定閾値: {alert_threshold_percent:.2f}%"
+        f"設定閾値: {_format_alert_threshold(alert_threshold_percent)}%"
     )
 
 

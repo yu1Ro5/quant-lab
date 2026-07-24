@@ -377,6 +377,23 @@ class SlackNotificationTests(unittest.TestCase):
         self.assertTrue(message.startswith("⚠️ USD/JPY変動アラート\n"))
         self.assertTrue(message.endswith("\n設定閾値: 1.00%"))
 
+    def test_preserves_small_positive_threshold_instead_of_displaying_zero(self):
+        ticker = ApiTests().get_ticker(response_payload())
+        change = main.RateChange(
+            amount=Decimal("0.01"),
+            percent=Decimal("0.004"),
+            direction="円安",
+        )
+
+        message = main.build_notification_message(
+            ticker,
+            change,
+            alert_threshold_percent=Decimal("0.004"),
+        )
+
+        self.assertTrue(message.endswith("\n設定閾値: 0.004%"))
+        self.assertNotIn("設定閾値: 0.00%", message)
+
     def test_does_not_add_alert_text_below_threshold_or_without_comparison(self):
         ticker = ApiTests().get_ticker(response_payload())
         below_threshold = main.RateChange(
