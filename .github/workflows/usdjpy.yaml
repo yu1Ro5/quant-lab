@@ -16,6 +16,7 @@ jobs:
     env:
       SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
       SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
+      USD_JPY_ALERT_THRESHOLD_PERCENT: ${{ vars.USD_JPY_ALERT_THRESHOLD_PERCENT }}
 
     steps:
       - name: Checkout

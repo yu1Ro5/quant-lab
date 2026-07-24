@@ -67,7 +67,22 @@ uv run python main.py
 
 どちらかが未設定の場合もレート取得とCSV保存は実行され、Slack通知だけをスキップします。コンソールと通知には仲値、bid、ask、spread、APIの基準時刻、市場ステータス、前回比が含まれます。
 
-通知例:
+### 変動アラート
+
+前回比の変動率が設定した閾値以上になった場合、通常のSlack通知を警告見出しと設定閾値で強調します。判定式は `abs(change_percent) >= threshold` で、円安方向の上昇と円高方向の下落の両方が対象です。判定には `RateChange.percent` の丸め前の `Decimal` 値をそのまま使い、閾値と完全に等しい場合もアラートになります。比較データがない場合は通常通知です。
+
+閾値は環境変数 `USD_JPY_ALERT_THRESHOLD_PERCENT` で指定します。単位はパーセント、デフォルト値は `1.0` です。未設定、空文字、空白だけの場合はデフォルト値を使用します。設定値は正の有限数である必要があり、`0` 以下、不正な文字列、`NaN`、`Infinity`、`-Infinity` は設定エラーになります。不正値をデフォルト値へ置き換えることはありません。
+
+ローカルでは次のように設定します。
+
+```bash
+export USD_JPY_ALERT_THRESHOLD_PERCENT="0.5"
+uv run python main.py
+```
+
+GitHub Actionsでは、リポジトリの **Settings > Secrets and variables > Actions > Variables** から、Repository Variableとして `USD_JPY_ALERT_THRESHOLD_PERCENT` を登録してください。未登録時にワークフローへ空文字が渡された場合も、デフォルト値 `1.0` で動作します。
+
+通常通知の例:
 
 ```text
 USD/JPY 仲値: 162.74
@@ -78,6 +93,21 @@ spread: 0.02
 市場ステータス: OPEN
 前回比: +0.82円（+0.51%）
 方向: 円安
+```
+
+アラート通知の例:
+
+```text
+⚠️ USD/JPY変動アラート
+USD/JPY 仲値: 164.10
+bid: 164.09
+ask: 164.11
+spread: 0.02
+基準時刻: 2026-07-22T00:00:00+00:00
+市場ステータス: OPEN
+前回比: +1.82円（+1.12%）
+方向: 円安
+設定閾値: 1.00%
 ```
 
 比較できる過去データがない場合、末尾は次の形式になります。

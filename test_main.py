@@ -265,7 +265,75 @@ class RateChangeTests(unittest.TestCase):
         self.assertIn("方向: 円安", message)
 
 
+class AlertThresholdTests(unittest.TestCase):
+    def test_uses_default_for_missing_empty_or_whitespace_value(self):
+        for value in (None, "", "   "):
+            with self.subTest(value=value):
+                if value is None:
+                    environment = {}
+                else:
+                    environment = {"USD_JPY_ALERT_THRESHOLD_PERCENT": value}
+                with patch.dict(os.environ, environment, clear=True):
+                    self.assertEqual(
+                        main.get_alert_threshold_percent(),
+                        Decimal("1.0"),
+                    )
+
+    def test_reads_positive_decimal(self):
+        self.assertEqual(
+            main.get_alert_threshold_percent("0.5"),
+            Decimal("0.5"),
+        )
+
+    def test_rejects_non_positive_invalid_and_non_finite_values(self):
+        for value in (
+            "0",
+            "-0.1",
+            "not-a-number",
+            "NaN",
+            "Infinity",
+            "-Infinity",
+        ):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                main.get_alert_threshold_percent(value)
+
+    def test_alerts_using_absolute_unrounded_change_percent(self):
+        cases = (
+            ("0.999", "1.0", False),
+            ("1.000", "1.0", True),
+            ("1.004", "1.0", True),
+            ("-1.000", "1.0", True),
+            ("-1.004", "1.0", True),
+            (None, "1.0", False),
+        )
+        for change_percent, threshold, expected in cases:
+            with self.subTest(change_percent=change_percent, threshold=threshold):
+                value = Decimal(change_percent) if change_percent is not None else None
+                self.assertIs(
+                    main.should_alert(value, Decimal(threshold)),
+                    expected,
+                )
+
+
 class SlackNotificationTests(unittest.TestCase):
+    def test_normal_message_is_unchanged(self):
+        ticker = ApiTests().get_ticker(response_payload())
+        change = main.calculate_rate_change(ticker.rate, Decimal("145.30"))
+
+        message = main.build_notification_message(ticker, change)
+
+        self.assertEqual(
+            message,
+            "USD/JPY 仲値: 146.130\n"
+            "bid: 146.125\n"
+            "ask: 146.135\n"
+            "spread: 0.010\n"
+            "基準時刻: 2026-07-23T15:30:00.123000+00:00\n"
+            "市場ステータス: OPEN\n"
+            "前回比: +0.83円（+0.57%）\n"
+            "方向: 円安",
+        )
+
     def test_message_contains_all_market_values(self):
         ticker = ApiTests().get_ticker(response_payload())
         change = main.calculate_rate_change(ticker.rate, Decimal("145.30"))
@@ -292,6 +360,59 @@ class SlackNotificationTests(unittest.TestCase):
         self.assertIn("前回比: -0.82円（-0.56%）", message)
         self.assertIn("方向: 円高", message)
 
+    def test_adds_alert_heading_and_threshold_only_when_threshold_is_met(self):
+        ticker = ApiTests().get_ticker(response_payload())
+        change = main.RateChange(
+            amount=Decimal("1.00"),
+            percent=Decimal("1.004"),
+            direction="円安",
+        )
+
+        message = main.build_notification_message(
+            ticker,
+            change,
+            alert_threshold_percent=Decimal("1.004"),
+        )
+
+        self.assertTrue(message.startswith("⚠️ USD/JPY変動アラート\n"))
+        self.assertTrue(message.endswith("\n設定閾値: 1.00%"))
+
+    def test_does_not_add_alert_text_below_threshold_or_without_comparison(self):
+        ticker = ApiTests().get_ticker(response_payload())
+        below_threshold = main.RateChange(
+            amount=Decimal("1.00"),
+            percent=Decimal("0.999"),
+            direction="円安",
+        )
+        for change in (below_threshold, None):
+            with self.subTest(change=change):
+                message = main.build_notification_message(
+                    ticker,
+                    change,
+                    alert_threshold_percent=Decimal("1.0"),
+                )
+                self.assertNotIn("⚠️ USD/JPY変動アラート", message)
+                self.assertNotIn("設定閾値:", message)
+
+    def test_adds_alert_for_increase_and_decrease(self):
+        ticker = ApiTests().get_ticker(response_payload())
+        for percent, direction in (
+            (Decimal("1.1"), "円安"),
+            (Decimal("-1.1"), "円高"),
+        ):
+            with self.subTest(percent=percent):
+                message = main.build_notification_message(
+                    ticker,
+                    main.RateChange(
+                        amount=Decimal("1") if percent > 0 else Decimal("-1"),
+                        percent=percent,
+                        direction=direction,
+                    ),
+                    alert_threshold_percent=Decimal("1.0"),
+                )
+                self.assertIn("⚠️ USD/JPY変動アラート", message)
+                self.assertIn("設定閾値: 1.00%", message)
+
     def test_skips_without_secrets(self):
         output = StringIO()
         with patch.dict(os.environ, {}, clear=True), redirect_stdout(output):
@@ -306,9 +427,30 @@ class SlackNotificationTests(unittest.TestCase):
 
 
 class MainFlowTests(unittest.TestCase):
+    def test_rejects_invalid_threshold_before_external_or_csv_processing(self):
+        with (
+            patch.dict(
+                os.environ,
+                {"USD_JPY_ALERT_THRESHOLD_PERCENT": "NaN"},
+                clear=True,
+            ),
+            patch("main.get_usd_jpy") as get_quote,
+            patch("main.find_previous_rate") as find_rate,
+            patch("main.save_usd_jpy_rate") as save_rate,
+            patch("main.send_slack_notification") as send_message,
+            self.assertRaises(ValueError),
+        ):
+            main.main()
+
+        get_quote.assert_not_called()
+        find_rate.assert_not_called()
+        save_rate.assert_not_called()
+        send_message.assert_not_called()
+
     def test_compares_before_saving_and_sends_the_generated_message(self):
         ticker = ApiTests().get_ticker(response_payload())
         events = []
+        output = StringIO()
 
         def find_previous_rate(*_args):
             events.append("compare")
@@ -327,13 +469,48 @@ class MainFlowTests(unittest.TestCase):
             patch("main.find_previous_rate", side_effect=find_previous_rate),
             patch("main.save_usd_jpy_rate", side_effect=save_rate),
             patch("main.send_slack_notification", side_effect=send_message),
-            redirect_stdout(StringIO()),
+            patch.dict(
+                os.environ,
+                {"USD_JPY_ALERT_THRESHOLD_PERCENT": "0.5"},
+                clear=True,
+            ),
+            redirect_stdout(output),
         ):
             main.main()
 
         self.assertEqual(events[:2], ["compare", "save"])
         self.assertEqual(events[2][0], "send")
         self.assertIn("前回比: +0.83円（+0.57%）", events[2][1])
+        self.assertIn("⚠️ USD/JPY変動アラート", events[2][1])
+        self.assertIn("Alert: yes", output.getvalue())
+        self.assertEqual(
+            sum(event[0] == "send" for event in events if isinstance(event, tuple)),
+            1,
+        )
+
+    def test_prints_no_alert_and_sends_once_when_change_is_below_threshold(self):
+        ticker = ApiTests().get_ticker(response_payload())
+        output = StringIO()
+        with (
+            patch("main.get_usd_jpy", return_value=ticker),
+            patch("main.find_previous_rate", return_value=Decimal("145.30")),
+            patch("main.save_usd_jpy_rate", return_value=False),
+            patch("main.send_slack_notification") as send_message,
+            patch.dict(
+                os.environ,
+                {"USD_JPY_ALERT_THRESHOLD_PERCENT": "1.0"},
+                clear=True,
+            ),
+            redirect_stdout(output),
+        ):
+            main.main()
+
+        self.assertIn("Alert: no", output.getvalue())
+        send_message.assert_called_once()
+        self.assertNotIn(
+            "⚠️ USD/JPY変動アラート",
+            send_message.call_args.args[0],
+        )
 
 
 if __name__ == "__main__":
