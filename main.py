@@ -188,7 +188,7 @@ def _format_change_value(value: Decimal) -> str:
 def _format_alert_threshold(value: Decimal) -> str:
     rounded = f"{value:.2f}"
     if rounded == "0.00":
-        return format(value, "f")
+        return str(value)
     return rounded
 
 

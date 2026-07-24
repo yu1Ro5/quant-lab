@@ -394,6 +394,24 @@ class SlackNotificationTests(unittest.TestCase):
         self.assertTrue(message.endswith("\n設定閾値: 0.004%"))
         self.assertNotIn("設定閾値: 0.00%", message)
 
+    def test_keeps_extremely_small_threshold_in_compact_exponent_form(self):
+        ticker = ApiTests().get_ticker(response_payload())
+        threshold = Decimal("1E-1000")
+        change = main.RateChange(
+            amount=Decimal("0.01"),
+            percent=threshold,
+            direction="円安",
+        )
+
+        message = main.build_notification_message(
+            ticker,
+            change,
+            alert_threshold_percent=threshold,
+        )
+
+        self.assertTrue(message.endswith("\n設定閾値: 1E-1000%"))
+        self.assertLess(len(message), 500)
+
     def test_does_not_add_alert_text_below_threshold_or_without_comparison(self):
         ticker = ApiTests().get_ticker(response_payload())
         below_threshold = main.RateChange(
