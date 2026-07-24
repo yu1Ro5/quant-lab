@@ -1,47 +1,66 @@
 # quant-lab
 
-This script fetches the current USD/JPY exchange rate, prints it, stores it in CSV, and optionally sends a Slack notification.
+GMOコイン外国為替FX Public APIからUSD/JPYの最新レートを取得し、コンソール表示、CSVへの履歴保存、および任意のSlack通知を行うスクリプトです。Public APIを利用するため、GMOコインのAPIキーやSecretは不要です。
 
-## Usage
+レートと基準時刻は `GET https://forex-api.coin.z.com/public/v1/ticker`、市場ステータスは `GET https://forex-api.coin.z.com/public/v1/status` から取得します。詳細は[GMOコイン外国為替FX APIドキュメント](https://api.coin.z.com/fxdocs/)を参照してください。
 
-Run the script:
+## レート項目
+
+| 項目 | 意味 |
+| --- | --- |
+| `bid` | 現在の売値 |
+| `ask` | 現在の買値 |
+| `rate` | bidとaskの仲値（`(bid + ask) / 2`） |
+| `spread` | 売値と買値の差（`ask - bid`） |
+
+計算には浮動小数点誤差を避けるため `Decimal` を使用します。APIの基準時刻はUTCとして解析し、日本時間の日付を `rate_date` として保存します。
+
+## 実行方法
+
+依存関係を同期してスクリプトを実行します。
 
 ```bash
-python main.py
+uv sync --locked
+uv run python main.py
 ```
 
-The script fetches the latest USD/JPY rate and appends it to `data/usd_jpy.csv`. The `data` directory is created automatically when it does not exist.
+最新レートは `data/usd_jpy.csv` に追記されます（`data` ディレクトリがなければ自動作成されます）。同じ `rate_date` の行がすでに存在する場合は重複保存しません。
 
-If a row for the same `rate_date` already exists, the script skips writing a duplicate row.
+## CSV履歴
 
-## CSV history
+CSVは次の列で構成されます。
 
-The CSV file is stored at `data/usd_jpy.csv` with the following columns:
-
-| Column | Description |
+| 列 | 説明 |
 | --- | --- |
-| `fetched_at` | UTC timestamp when the rate was fetched |
-| `rate_date` | Rate date returned by the exchange-rate API |
-| `rate` | USD/JPY exchange rate |
+| `fetched_at` | 処理を実行したUTC時刻 |
+| `rate_date` | API基準時刻を日本時間に変換した日付 |
+| `rate` | USD/JPYの仲値 |
+| `bid` | USD/JPYの売値 |
+| `ask` | USD/JPYの買値 |
+| `spread` | `ask - bid` で計算した差 |
+| `source_timestamp` | ticker APIの `responsetime` が示す基準時刻（UTC） |
+| `market_status` | 市場ステータス（`OPEN` または `CLOSE`） |
 
-## Slack notification
+旧形式（`fetched_at,rate_date,rate`）のCSVは、次回保存時に既存の3項目を維持したまま新形式へ安全に移行します。旧行の追加項目は空欄になります。
 
-Set the Slack bot token and target channel before running the script:
+## Slack通知
+
+Slack通知を利用する場合だけ、Bot tokenと通知先チャンネルを設定します。
 
 ```bash
 export SLACK_BOT_TOKEN="xoxb-your-bot-token"
 export SLACK_CHANNEL="#alerts"
-python main.py
+uv run python main.py
 ```
 
-If either environment variable is not set, the script prints the exchange rate and skips the Slack notification.
+どちらかが未設定の場合もレート取得とCSV保存は実行され、Slack通知だけをスキップします。コンソールと通知には仲値、bid、ask、spread、APIの基準時刻、市場ステータスが含まれます。
 
-## Tests and CI
+## テストとCI
 
-Run the test suite locally with:
+外部APIやSlackには接続せず、モックを使うunittestを実行します。
 
 ```bash
 uv run python -m unittest discover -v
 ```
 
-GitHub Actions runs the same test suite for pull requests targeting `main`, pushes to `main`, and manual workflow runs. The CI workflow uses Python 3.12 and installs the dependencies locked in `uv.lock`.
+GitHub Actionsは `main` へのpush、`main` 向けPull Request、手動実行時に同じテストを実行します。平日の日次レート取得ワークフロー（日本時間9:00）も継続し、更新されたCSVをコミットします。
