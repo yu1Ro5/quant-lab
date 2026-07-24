@@ -24,6 +24,8 @@ RATE_HISTORY_COLUMNS = [
     "market_status",
 ]
 DEFAULT_RATE_HISTORY_PATH = Path("data/usd_jpy.csv")
+DEFAULT_ALERT_THRESHOLD_PERCENT = Decimal("1.0")
+ALERT_THRESHOLD_ENVIRONMENT_VARIABLE = "USD_JPY_ALERT_THRESHOLD_PERCENT"
 JST = ZoneInfo("Asia/Tokyo")
 
 
@@ -151,6 +153,31 @@ def calculate_rate_change(current_rate: Decimal, previous_rate: Decimal) -> Rate
     )
 
 
+def get_alert_threshold_percent(value: str | None = None) -> Decimal:
+    if value is None:
+        value = os.getenv(ALERT_THRESHOLD_ENVIRONMENT_VARIABLE)
+    if value is None or not value.strip():
+        return DEFAULT_ALERT_THRESHOLD_PERCENT
+    try:
+        threshold = Decimal(value)
+    except InvalidOperation as error:
+        raise ValueError(
+            f"{ALERT_THRESHOLD_ENVIRONMENT_VARIABLE} must be a positive finite number"
+        ) from error
+    if not threshold.is_finite() or threshold <= 0:
+        raise ValueError(
+            f"{ALERT_THRESHOLD_ENVIRONMENT_VARIABLE} must be a positive finite number"
+        )
+    return threshold
+
+
+def should_alert(
+    change_percent: Decimal | None,
+    threshold_percent: Decimal,
+) -> bool:
+    return change_percent is not None and abs(change_percent) >= threshold_percent
+
+
 def _format_change_value(value: Decimal) -> str:
     rounded = value.quantize(Decimal("0.01"))
     if rounded == 0:
@@ -158,9 +185,17 @@ def _format_change_value(value: Decimal) -> str:
     return f"{rounded:+.2f}"
 
 
+def _format_alert_threshold(value: Decimal) -> str:
+    rounded = f"{value:.2f}"
+    if rounded == "0.00":
+        return str(value)
+    return rounded
+
+
 def build_notification_message(
     ticker: UsdJpyQuote,
     change: RateChange | None,
+    alert_threshold_percent: Decimal | None = None,
 ) -> str:
     message = (
         f"USD/JPY 仲値: {ticker.rate}\n"
@@ -169,11 +204,20 @@ def build_notification_message(
     )
     if change is None:
         return f"{message}\n前回比: 比較データなし"
-    return (
+    message = (
         f"{message}\n"
         f"前回比: {_format_change_value(change.amount)}円"
         f"（{_format_change_value(change.percent)}%）\n"
         f"方向: {change.direction}"
+    )
+    if alert_threshold_percent is None or not should_alert(
+        change.percent,
+        alert_threshold_percent,
+    ):
+        return message
+    return (
+        f"⚠️ USD/JPY変動アラート\n{message}\n"
+        f"設定閾値: {_format_alert_threshold(alert_threshold_percent)}%"
     )
 
 
@@ -277,6 +321,7 @@ def send_slack_notification(message: str, token: str | None = None, channel: str
 
 
 def main() -> None:
+    alert_threshold_percent = get_alert_threshold_percent()
     ticker = get_usd_jpy()
     previous_rate = find_previous_rate(DEFAULT_RATE_HISTORY_PATH, ticker.rate_date)
     change = (
@@ -284,9 +329,18 @@ def main() -> None:
         if previous_rate is not None
         else None
     )
-    message = build_notification_message(ticker, change)
+    alert = should_alert(
+        change.percent if change is not None else None,
+        alert_threshold_percent,
+    )
+    message = build_notification_message(
+        ticker,
+        change,
+        alert_threshold_percent,
+    )
     print("=== USD/JPY ===")
     print(message)
+    print(f"Alert: {'yes' if alert else 'no'}")
     saved = save_usd_jpy_rate(ticker)
     if saved:
         print(f"CSV: saved to {DEFAULT_RATE_HISTORY_PATH}")
