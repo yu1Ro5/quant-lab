@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 from contextlib import redirect_stdout
 
 import requests
@@ -14,25 +14,38 @@ import requests
 import main
 
 
-def response_payload(*, status=0, timestamp="2026-07-23T15:30:00.123Z", market_status="OPEN"):
+def response_payload(*, status=0, responsetime="2026-07-23T15:30:00.123Z"):
     return {
         "status": status,
-        "timestamp": timestamp,
+        "responsetime": responsetime,
         "data": [
-            {"symbol": "EUR_USD", "bid": "1.17000", "ask": "1.17010", "status": "OPEN"},
-            {"symbol": "USD_JPY", "bid": "146.125", "ask": "146.135", "status": market_status},
+            {"symbol": "EUR_USD", "bid": "1.17000", "ask": "1.17010"},
+            {"symbol": "USD_JPY", "bid": "146.125", "ask": "146.135"},
         ],
     }
 
 
+def status_payload(*, status=0, market_status="OPEN"):
+    return {"status": status, "data": {"status": market_status}}
+
+
 class ApiTests(unittest.TestCase):
-    def get_ticker(self, payload):
-        response = Mock()
-        response.json.return_value = payload
-        response.raise_for_status.return_value = None
-        with patch("main.requests.get", return_value=response) as request:
+    def get_ticker(self, payload, market_payload=None):
+        ticker_response = Mock()
+        ticker_response.json.return_value = payload
+        ticker_response.raise_for_status.return_value = None
+        status_response = Mock()
+        status_response.json.return_value = market_payload or status_payload()
+        status_response.raise_for_status.return_value = None
+        with patch("main.requests.get", side_effect=[ticker_response, status_response]) as request:
             ticker = main.get_usd_jpy()
-        request.assert_called_once_with(main.TICKER_URL, timeout=main.HTTP_TIMEOUT_SECONDS)
+        self.assertEqual(
+            request.call_args_list,
+            [
+                call(main.TICKER_URL, timeout=main.HTTP_TIMEOUT_SECONDS),
+                call(main.MARKET_STATUS_URL, timeout=main.HTTP_TIMEOUT_SECONDS),
+            ],
+        )
         return ticker
 
     def test_finds_usd_jpy_after_first_item_and_calculates_decimal_values(self):
@@ -48,7 +61,18 @@ class ApiTests(unittest.TestCase):
     def test_handles_open_and_close(self):
         for status in ("OPEN", "CLOSE"):
             with self.subTest(status=status):
-                self.assertEqual(self.get_ticker(response_payload(market_status=status)).market_status, status)
+                self.assertEqual(
+                    self.get_ticker(
+                        response_payload(), status_payload(market_status=status)
+                    ).market_status,
+                    status,
+                )
+
+    def test_reads_market_status_from_status_endpoint_not_ticker(self):
+        payload = response_payload()
+        payload["data"][1]["status"] = "CLOSE"
+        ticker = self.get_ticker(payload, status_payload(market_status="OPEN"))
+        self.assertEqual(ticker.market_status, "OPEN")
 
     def test_rejects_unsuccessful_api_status(self):
         with self.assertRaisesRegex(ValueError, "unsuccessful status"):
@@ -72,7 +96,17 @@ class ApiTests(unittest.TestCase):
 
     def test_rejects_invalid_timestamp(self):
         with self.assertRaisesRegex(ValueError, "invalid timestamp"):
-            self.get_ticker(response_payload(timestamp="yesterday"))
+            self.get_ticker(response_payload(responsetime="yesterday"))
+
+    def test_rejects_invalid_market_status_response(self):
+        for payload in (
+            {"status": 0, "data": []},
+            status_payload(market_status="MAINTENANCE"),
+        ):
+            with self.subTest(payload=payload), self.assertRaisesRegex(
+                ValueError, "market status"
+            ):
+                self.get_ticker(response_payload(), payload)
 
     def test_handles_http_error_and_timeout(self):
         for error, message in (

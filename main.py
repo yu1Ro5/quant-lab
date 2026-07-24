@@ -11,6 +11,7 @@ import requests
 from slack_sdk import WebClient
 
 TICKER_URL = "https://forex-api.coin.z.com/public/v1/ticker"
+MARKET_STATUS_URL = "https://forex-api.coin.z.com/public/v1/status"
 HTTP_TIMEOUT_SECONDS = 10
 RATE_HISTORY_COLUMNS = [
     "fetched_at",
@@ -62,9 +63,9 @@ def _parse_price(ticker: dict[str, object], field: str) -> Decimal:
         raise ValueError(f"USD_JPY ticker has a missing or invalid {field}: {value!r}") from error
 
 
-def get_usd_jpy() -> UsdJpyTicker:
+def _get_api_payload(url: str) -> dict[str, object]:
     try:
-        response = requests.get(TICKER_URL, timeout=HTTP_TIMEOUT_SECONDS)
+        response = requests.get(url, timeout=HTTP_TIMEOUT_SECONDS)
         response.raise_for_status()
     except requests.Timeout as error:
         raise RuntimeError(f"GMO API request timed out after {HTTP_TIMEOUT_SECONDS} seconds") from error
@@ -79,6 +80,11 @@ def get_usd_jpy() -> UsdJpyTicker:
         raise ValueError("GMO API response must be a JSON object")
     if payload.get("status") != 0:
         raise ValueError(f"GMO API returned unsuccessful status: {payload.get('status')!r}")
+    return payload
+
+
+def get_usd_jpy() -> UsdJpyTicker:
+    payload = _get_api_payload(TICKER_URL)
     data = payload.get("data")
     if not isinstance(data, list):
         raise ValueError("GMO API response has an invalid data array")
@@ -92,10 +98,15 @@ def get_usd_jpy() -> UsdJpyTicker:
 
     bid = _parse_price(ticker, "bid")
     ask = _parse_price(ticker, "ask")
-    source_timestamp = _parse_timestamp(payload.get("timestamp"))
-    market_status = ticker.get("status")
+    source_timestamp = _parse_timestamp(payload.get("responsetime"))
+
+    status_payload = _get_api_payload(MARKET_STATUS_URL)
+    status_data = status_payload.get("data")
+    if not isinstance(status_data, dict):
+        raise ValueError("GMO API market status response has invalid data")
+    market_status = status_data.get("status")
     if market_status not in {"OPEN", "CLOSE"}:
-        raise ValueError(f"USD_JPY ticker has an invalid market status: {market_status!r}")
+        raise ValueError(f"GMO API returned an invalid market status: {market_status!r}")
     return UsdJpyTicker(
         bid=bid,
         ask=ask,

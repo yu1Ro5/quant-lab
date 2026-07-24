@@ -2,7 +2,7 @@
 
 GMOコイン外国為替FX Public APIからUSD/JPYの最新レートを取得し、コンソール表示、CSVへの履歴保存、および任意のSlack通知を行うスクリプトです。Public APIを利用するため、GMOコインのAPIキーやSecretは不要です。
 
-取得先は `GET https://forex-api.coin.z.com/public/v1/ticker` です。詳細は[GMOコイン外国為替FX APIドキュメント](https://api.coin.z.com/fxdocs/)を参照してください。
+レートと基準時刻は `GET https://forex-api.coin.z.com/public/v1/ticker`、市場ステータスは `GET https://forex-api.coin.z.com/public/v1/status` から取得します。詳細は[GMOコイン外国為替FX APIドキュメント](https://api.coin.z.com/fxdocs/)を参照してください。
 
 ## レート項目
 
@@ -38,7 +38,7 @@ CSVは次の列で構成されます。
 | `bid` | USD/JPYの売値 |
 | `ask` | USD/JPYの買値 |
 | `spread` | `ask - bid` で計算した差 |
-| `source_timestamp` | APIが返した基準時刻（UTC） |
+| `source_timestamp` | ticker APIの `responsetime` が示す基準時刻（UTC） |
 | `market_status` | 市場ステータス（`OPEN` または `CLOSE`） |
 
 旧形式（`fetched_at,rate_date,rate`）のCSVは、次回保存時に既存の3項目を維持したまま新形式へ安全に移行します。旧行の追加項目は空欄になります。
