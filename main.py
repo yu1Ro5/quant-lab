@@ -1,7 +1,7 @@
 import csv
 import os
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -28,7 +28,7 @@ JST = ZoneInfo("Asia/Tokyo")
 
 
 @dataclass(frozen=True)
-class UsdJpyTicker:
+class UsdJpyQuote:
     bid: Decimal
     ask: Decimal
     rate: Decimal
@@ -36,6 +36,17 @@ class UsdJpyTicker:
     source_timestamp: datetime
     rate_date: str
     market_status: str
+
+
+# Keep the name used by PR #18 callers while exposing the quote terminology.
+UsdJpyTicker = UsdJpyQuote
+
+
+@dataclass(frozen=True)
+class RateChange:
+    amount: Decimal
+    percent: Decimal
+    direction: str
 
 
 def _parse_timestamp(value: object) -> datetime:
@@ -83,7 +94,7 @@ def _get_api_payload(url: str) -> dict[str, object]:
     return payload
 
 
-def get_usd_jpy() -> UsdJpyTicker:
+def get_usd_jpy() -> UsdJpyQuote:
     payload = _get_api_payload(TICKER_URL)
     data = payload.get("data")
     if not isinstance(data, list):
@@ -107,7 +118,7 @@ def get_usd_jpy() -> UsdJpyTicker:
     market_status = status_data.get("status")
     if market_status not in {"OPEN", "CLOSE"}:
         raise ValueError(f"GMO API returned an invalid market status: {market_status!r}")
-    return UsdJpyTicker(
+    return UsdJpyQuote(
         bid=bid,
         ask=ask,
         rate=(bid + ask) / Decimal("2"),
@@ -118,12 +129,87 @@ def get_usd_jpy() -> UsdJpyTicker:
     )
 
 
-def build_notification_message(ticker: UsdJpyTicker) -> str:
-    return (
+def calculate_rate_change(current_rate: Decimal, previous_rate: Decimal) -> RateChange:
+    if (
+        not current_rate.is_finite()
+        or current_rate <= 0
+        or not previous_rate.is_finite()
+        or previous_rate <= 0
+    ):
+        raise ValueError("Rates must be finite positive Decimal values")
+    amount = current_rate - previous_rate
+    if amount > 0:
+        direction = "円安"
+    elif amount < 0:
+        direction = "円高"
+    else:
+        direction = "変化なし"
+    return RateChange(
+        amount=amount,
+        percent=amount / previous_rate * Decimal("100"),
+        direction=direction,
+    )
+
+
+def _format_change_value(value: Decimal) -> str:
+    rounded = value.quantize(Decimal("0.01"))
+    if rounded == 0:
+        return "0.00"
+    return f"{rounded:+.2f}"
+
+
+def build_notification_message(
+    ticker: UsdJpyQuote,
+    change: RateChange | None,
+) -> str:
+    message = (
         f"USD/JPY 仲値: {ticker.rate}\n"
         f"bid: {ticker.bid}\nask: {ticker.ask}\nspread: {ticker.spread}\n"
         f"基準時刻: {ticker.source_timestamp.isoformat()}\n市場ステータス: {ticker.market_status}"
     )
+    if change is None:
+        return f"{message}\n前回比: 比較データなし"
+    return (
+        f"{message}\n"
+        f"前回比: {_format_change_value(change.amount)}円"
+        f"（{_format_change_value(change.percent)}%）\n"
+        f"方向: {change.direction}"
+    )
+
+
+def find_previous_rate(
+    csv_path: str | Path,
+    current_rate_date: str,
+) -> Decimal | None:
+    path = Path(csv_path)
+    if not path.exists() or path.stat().st_size == 0:
+        return None
+
+    try:
+        current_date = date.fromisoformat(current_rate_date)
+    except ValueError as error:
+        raise ValueError(f"Invalid current rate_date: {current_rate_date!r}") from error
+
+    latest: tuple[date, Decimal] | None = None
+    with path.open(newline="", encoding="utf-8") as file:
+        reader = csv.DictReader(file)
+        if not reader.fieldnames or not {"rate_date", "rate"}.issubset(reader.fieldnames):
+            raise ValueError(f"CSV has an unsupported header: {reader.fieldnames}")
+        for row in reader:
+            try:
+                candidate_date = date.fromisoformat(row.get("rate_date", ""))
+                candidate_rate = Decimal(row.get("rate", ""))
+            except (InvalidOperation, TypeError, ValueError):
+                continue
+            if (
+                candidate_date >= current_date
+                or not candidate_rate.is_finite()
+                or candidate_rate <= 0
+            ):
+                continue
+            if latest is None or candidate_date > latest[0]:
+                latest = (candidate_date, candidate_rate)
+    return latest[1] if latest else None
 
 
 def _read_and_migrate_history(csv_path: Path) -> list[dict[str, str]]:
@@ -150,7 +236,7 @@ def _write_history(csv_path: Path, rows: list[dict[str, str]]) -> None:
 
 
 def save_usd_jpy_rate(
-    ticker: UsdJpyTicker,
+    ticker: UsdJpyQuote,
     csv_path: str | Path = DEFAULT_RATE_HISTORY_PATH,
     fetched_at: datetime | None = None,
 ) -> bool:
@@ -192,14 +278,21 @@ def send_slack_notification(message: str, token: str | None = None, channel: str
 
 def main() -> None:
     ticker = get_usd_jpy()
+    previous_rate = find_previous_rate(DEFAULT_RATE_HISTORY_PATH, ticker.rate_date)
+    change = (
+        calculate_rate_change(ticker.rate, previous_rate)
+        if previous_rate is not None
+        else None
+    )
+    message = build_notification_message(ticker, change)
     print("=== USD/JPY ===")
-    print(build_notification_message(ticker))
+    print(message)
     saved = save_usd_jpy_rate(ticker)
     if saved:
         print(f"CSV: saved to {DEFAULT_RATE_HISTORY_PATH}")
     else:
         print(f"CSV: {ticker.rate_date} is already saved; skipping")
-    send_slack_notification(build_notification_message(ticker))
+    send_slack_notification(message)
 
 
 if __name__ == "__main__":

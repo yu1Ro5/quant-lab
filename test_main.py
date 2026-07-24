@@ -159,13 +159,138 @@ class CsvHistoryTests(unittest.TestCase):
             self.assertEqual(len(rows), 1)
             self.assertEqual(rows[0]["rate"], "100")
 
+    def test_finds_latest_valid_rate_before_current_date_regardless_of_row_order(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "usd_jpy.csv"
+            path.write_text(
+                "fetched_at,rate_date,rate\n"
+                "third,2026-07-23,145.10\n"
+                "first,2026-07-18,143.00\n"
+                "same,2026-07-24,999.00\n"
+                "second,2026-07-21,144.20\n",
+                encoding="utf-8",
+            )
+
+            previous_rate = main.find_previous_rate(path, "2026-07-24")
+
+        self.assertEqual(previous_rate, Decimal("145.10"))
+
+    def test_uses_old_format_rate_across_calendar_gap(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "usd_jpy.csv"
+            path.write_text(
+                "fetched_at,rate_date,rate\n"
+                "friday,2026-07-17,142.50\n",
+                encoding="utf-8",
+            )
+
+            previous_rate = main.find_previous_rate(path, "2026-07-21")
+
+        self.assertEqual(previous_rate, Decimal("142.50"))
+
+    def test_excludes_same_date_and_future_rows(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "usd_jpy.csv"
+            path.write_text(
+                "fetched_at,rate_date,rate\n"
+                "past,2026-07-20,140\n"
+                "same,2026-07-21,141\n"
+                "future,2026-07-22,142\n",
+                encoding="utf-8",
+            )
+
+            previous_rate = main.find_previous_rate(path, "2026-07-21")
+
+        self.assertEqual(previous_rate, Decimal("140"))
+
+    def test_skips_invalid_dates_and_non_positive_or_non_finite_rates(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "usd_jpy.csv"
+            path.write_text(
+                "fetched_at,rate_date,rate\n"
+                "valid,2026-07-15,139.50\n"
+                "bad-date,not-a-date,150\n"
+                "zero,2026-07-16,0\n"
+                "negative,2026-07-17,-1\n"
+                "nan,2026-07-18,NaN\n"
+                "infinity,2026-07-19,Infinity\n",
+                encoding="utf-8",
+            )
+
+            previous_rate = main.find_previous_rate(path, "2026-07-21")
+
+        self.assertEqual(previous_rate, Decimal("139.50"))
+
+    def test_returns_none_when_no_valid_comparison_data_exists(self):
+        with TemporaryDirectory() as directory:
+            missing_path = Path(directory) / "missing.csv"
+
+            previous_rate = main.find_previous_rate(missing_path, "2026-07-21")
+
+        self.assertIsNone(previous_rate)
+
+
+class RateChangeTests(unittest.TestCase):
+    def test_calculates_increase_amount_percent_and_yen_weakening(self):
+        change = main.calculate_rate_change(Decimal("162.74"), Decimal("161.92"))
+
+        self.assertEqual(change.amount, Decimal("0.82"))
+        self.assertEqual(change.percent, Decimal("0.82") / Decimal("161.92") * 100)
+        self.assertEqual(change.direction, "円安")
+
+    def test_calculates_decrease_amount_percent_and_yen_strengthening(self):
+        change = main.calculate_rate_change(Decimal("162.00"), Decimal("162.82"))
+
+        self.assertEqual(change.amount, Decimal("-0.82"))
+        self.assertEqual(change.percent, Decimal("-0.82") / Decimal("162.82") * 100)
+        self.assertEqual(change.direction, "円高")
+
+    def test_reports_no_change_for_equal_rates(self):
+        change = main.calculate_rate_change(Decimal("162.00"), Decimal("162.00"))
+
+        self.assertEqual(change.amount, Decimal("0.00"))
+        self.assertEqual(change.percent, Decimal("0"))
+        self.assertEqual(change.direction, "変化なし")
+
+    def test_uses_unrounded_amount_for_direction(self):
+        change = main.calculate_rate_change(Decimal("100.0001"), Decimal("100.0000"))
+
+        message = main.build_notification_message(
+            ApiTests().get_ticker(response_payload()),
+            change,
+        )
+
+        self.assertEqual(change.direction, "円安")
+        self.assertIn("前回比: 0.00円（0.00%）", message)
+        self.assertIn("方向: 円安", message)
+
 
 class SlackNotificationTests(unittest.TestCase):
     def test_message_contains_all_market_values(self):
         ticker = ApiTests().get_ticker(response_payload())
-        message = main.build_notification_message(ticker)
+        change = main.calculate_rate_change(ticker.rate, Decimal("145.30"))
+        message = main.build_notification_message(ticker, change)
         for value in ("146.130", "146.125", "146.135", "0.010", "2026-07-23T15:30:00.123000+00:00", "OPEN"):
             self.assertIn(value, message)
+        self.assertIn("前回比: +0.83円（+0.57%）", message)
+        self.assertIn("方向: 円安", message)
+
+    def test_message_omits_direction_when_comparison_data_is_unavailable(self):
+        ticker = ApiTests().get_ticker(response_payload())
+
+        message = main.build_notification_message(ticker, None)
+
+        self.assertIn("前回比: 比較データなし", message)
+        self.assertNotIn("方向:", message)
+
+    def test_formats_negative_values_with_sign_and_two_decimal_places(self):
+        ticker = ApiTests().get_ticker(response_payload())
+        change = main.calculate_rate_change(ticker.rate, Decimal("146.95"))
+
+        message = main.build_notification_message(ticker, change)
+
+        self.assertIn("前回比: -0.82円（-0.56%）", message)
+        self.assertIn("方向: 円高", message)
 
     def test_skips_without_secrets(self):
         output = StringIO()
@@ -178,6 +303,37 @@ class SlackNotificationTests(unittest.TestCase):
             client_class.return_value.chat_postMessage.return_value = {"ok": True}
             self.assertTrue(main.send_slack_notification("hello", "token", "#alerts"))
         client_class.return_value.chat_postMessage.assert_called_once_with(channel="#alerts", text="hello")
+
+
+class MainFlowTests(unittest.TestCase):
+    def test_compares_before_saving_and_sends_the_generated_message(self):
+        ticker = ApiTests().get_ticker(response_payload())
+        events = []
+
+        def find_previous_rate(*_args):
+            events.append("compare")
+            return Decimal("145.30")
+
+        def save_rate(*_args):
+            events.append("save")
+            return True
+
+        def send_message(message):
+            events.append(("send", message))
+            return True
+
+        with (
+            patch("main.get_usd_jpy", return_value=ticker),
+            patch("main.find_previous_rate", side_effect=find_previous_rate),
+            patch("main.save_usd_jpy_rate", side_effect=save_rate),
+            patch("main.send_slack_notification", side_effect=send_message),
+            redirect_stdout(StringIO()),
+        ):
+            main.main()
+
+        self.assertEqual(events[:2], ["compare", "save"])
+        self.assertEqual(events[2][0], "send")
+        self.assertIn("前回比: +0.83円（+0.57%）", events[2][1])
 
 
 if __name__ == "__main__":
