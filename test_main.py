@@ -1,13 +1,13 @@
 import csv
+import os
+import unittest
+from contextlib import redirect_stdout
 from datetime import datetime, timezone
 from decimal import Decimal
 from io import StringIO
-import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
-import unittest
 from unittest.mock import Mock, call, patch
-from contextlib import redirect_stdout
 
 import requests
 

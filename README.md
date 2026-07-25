@@ -4,6 +4,35 @@ GMOコイン外国為替FX Public APIからUSD/JPYの最新レートを取得し
 
 レートと基準時刻は `GET https://forex-api.coin.z.com/public/v1/ticker`、市場ステータスは `GET https://forex-api.coin.z.com/public/v1/status` から取得します。詳細は[GMOコイン外国為替FX APIドキュメント](https://api.coin.z.com/fxdocs/)を参照してください。
 
+## 日足KLine
+
+GMOコイン外国為替FX Public APIの `GET /public/v1/klines` から、指定した年範囲のUSD/JPY日足を取得できます。BIDとASKを個別に取得し、同じ `openTime` のデータだけを結合します。APIが返す価格文字列は `Decimal`、ミリ秒単位のUnix timestampである `openTime` はUTCのタイムゾーン付き `datetime` として扱います。
+
+日足の `interval=1day` では、APIの `date` パラメータに日付ではなく4桁の年（`YYYY`）を指定します。次の例は2023年から2026年までを年の昇順で取得します。
+
+```bash
+uv run python daily_kline.py --from-year 2023 --to-year 2026
+```
+
+保存先の既定値は `data/usd_jpy_1day.csv` です。別の保存先は `--output` で指定できます。
+
+```bash
+uv run python daily_kline.py \
+  --from-year 2025 \
+  --to-year 2026 \
+  --output data/usd_jpy_1day_recent.csv
+```
+
+実行結果には取得件数、追加件数、更新件数を表示します。既存CSVは維持しながら `open_time` をキーに新規行を追加し、同じ時刻の内容が変わった場合は更新します。保存時はUTCの `open_time` 昇順に並べ、同一時刻を重複保存しません。BIDとASKの時刻が一致しない場合は、欠損した行を作らずエラーにします。
+
+CSVは最新レート履歴とは分けて保存し、次の列で構成されます。
+
+```csv
+open_time,bid_open,bid_high,bid_low,bid_close,ask_open,ask_high,ask_low,ask_close
+```
+
+`open_time` はUTCのISO 8601形式です。OHLCは、BIDとASKそれぞれについて始値（`open`）、高値（`high`）、安値（`low`）、終値（`close`）をAPIの意味のまま保存します。BID/ASKから根拠の不明確な仲値高値・安値は生成しません。
+
 ## レート項目
 
 | 項目 | 意味 |
@@ -118,10 +147,12 @@ spread: 0.02
 
 ## テストとCI
 
-外部APIやSlackには接続せず、モックを使うunittestを実行します。
+外部APIやSlackには接続せず、既存方針に合わせて `unittest` とモックを使うテストを実行します。
 
 ```bash
 uv run python -m unittest discover -v
+uv run ruff check .
+uv run mypy .
 ```
 
 GitHub Actionsは `main` へのpush、`main` 向けPull Request、手動実行時に同じテストを実行します。
