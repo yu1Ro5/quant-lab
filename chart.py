@@ -80,13 +80,20 @@ def load_chart_points(
     if path.stat().st_size == 0:
         return []
 
-    with path.open(newline="", encoding="utf-8") as file:
-        reader = csv.DictReader(file)
-        if not reader.fieldnames or not REQUIRED_COLUMNS.issubset(reader.fieldnames):
-            raise ChartDataError(
-                f"日足CSVのヘッダーが未対応です: {reader.fieldnames}"
-            )
-        points = [_parse_point(row) for row in reader]
+    try:
+        with path.open(newline="", encoding="utf-8") as file:
+            reader = csv.DictReader(file, strict=True)
+            if not reader.fieldnames or not REQUIRED_COLUMNS.issubset(
+                reader.fieldnames
+            ):
+                raise ChartDataError(
+                    f"日足CSVのヘッダーが未対応です: {reader.fieldnames}"
+                )
+            points = [_parse_point(row) for row in reader]
+    except UnicodeDecodeError as error:
+        raise ChartDataError("日足CSVをUTF-8として読み込めません") from error
+    except csv.Error as error:
+        raise ChartDataError(f"日足CSVの形式が不正です: {error}") from error
 
     points.sort(key=lambda point: point.trading_date)
     if len({point.trading_date for point in points}) != len(points):

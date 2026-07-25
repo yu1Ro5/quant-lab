@@ -119,6 +119,26 @@ class ChartDataTests(unittest.TestCase):
             with self.assertRaisesRegex(chart.ChartDataError, "Close"):
                 chart.load_chart_points(path)
 
+    def test_reports_non_utf8_data_as_a_chart_error(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "invalid-encoding.csv"
+            path.write_bytes(b"\xff\xfe\x00")
+
+            with self.assertRaisesRegex(chart.ChartDataError, "UTF-8"):
+                chart.load_chart_points(path)
+
+    def test_reports_malformed_csv_as_a_chart_error(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "malformed.csv"
+            path.write_text(
+                "open_time,bid_close,ask_close\n"
+                '"2026-01-01T00:00:00+00:00,140.00,140.02\n',
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(chart.ChartDataError, "形式が不正"):
+                chart.load_chart_points(path)
+
 
 class ChartComponentTests(unittest.TestCase):
     def test_chart_has_line_grid_axes_and_close_values(self):
@@ -132,8 +152,17 @@ class ChartComponentTests(unittest.TestCase):
         self.assertEqual(specification["mark"]["type"], "line")
         self.assertTrue(specification["encoding"]["x"]["axis"]["grid"])
         self.assertTrue(specification["encoding"]["y"]["axis"]["grid"])
+        self.assertEqual(specification["encoding"]["x"]["type"], "ordinal")
+        self.assertEqual(
+            specification["encoding"]["tooltip"][0]["type"],
+            "nominal",
+        )
         self.assertEqual(specification["encoding"]["y"]["title"], "Close価格")
         self.assertEqual(len(specification["data"]["values"]), 2)
+        self.assertEqual(
+            specification["data"]["values"][0]["date"],
+            "2026-01-01",
+        )
 
     def test_dark_mode_configuration_is_present(self):
         config = Path(".streamlit/config.toml").read_text(encoding="utf-8")

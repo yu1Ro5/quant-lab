@@ -33,9 +33,14 @@ def build_chart(points: list[ChartPoint]) -> alt.Chart:
         .mark_line(point=True, strokeWidth=2.5, color="#60A5FA")
         .encode(
             x=alt.X(
-                "date:T",
+                "date:O",
                 title="日付",
-                axis=alt.Axis(format="%m/%d", grid=True, labelAngle=-45),
+                sort=None,
+                axis=alt.Axis(
+                    grid=True,
+                    labelAngle=-45,
+                    labelExpr="substring(datum.label, 5)",
+                ),
             ),
             y=alt.Y(
                 "close:Q",
@@ -44,7 +49,7 @@ def build_chart(points: list[ChartPoint]) -> alt.Chart:
                 axis=alt.Axis(grid=True),
             ),
             tooltip=[
-                alt.Tooltip("date:T", title="日付", format="%Y-%m-%d"),
+                alt.Tooltip("date:N", title="日付"),
                 alt.Tooltip("close:Q", title="Close", format=".3f"),
             ],
         )
