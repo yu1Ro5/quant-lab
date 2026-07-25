@@ -11,6 +11,7 @@ import streamlit as st
 from chart import (
     DEFAULT_KLINE_HISTORY_PATH,
     ChartDataError,
+    ChartDataMissingError,
     ChartPoint,
     load_chart_points,
 )
@@ -62,6 +63,13 @@ def render() -> None:
     try:
         with st.spinner("日足データを読み込んでいます..."):
             points = load_chart_points(csv_path)
+    except ChartDataMissingError as error:
+        st.info(
+            f"{error}\n"
+            "先に `uv run python daily_kline.py --from-year 2023 --to-year 2026` "
+            "を実行して日足データを取得してください。"
+        )
+        return
     except (ChartDataError, OSError) as error:
         st.error(f"日足データを読み込めませんでした: {error}")
         return

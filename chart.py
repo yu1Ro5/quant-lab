@@ -18,6 +18,10 @@ class ChartDataError(ValueError):
     """Raised when persisted daily KLine data cannot be charted safely."""
 
 
+class ChartDataMissingError(ChartDataError):
+    """Raised when the daily KLine CSV has not been generated yet."""
+
+
 @dataclass(frozen=True)
 class ChartPoint:
     """One trading day's midpoint close price."""
@@ -71,7 +75,9 @@ def load_chart_points(
         raise ValueError("limit must be greater than zero")
 
     path = Path(csv_path)
-    if not path.exists() or path.stat().st_size == 0:
+    if not path.exists():
+        raise ChartDataMissingError(f"日足CSVが見つかりません: {path}")
+    if path.stat().st_size == 0:
         return []
 
     with path.open(newline="", encoding="utf-8") as file:

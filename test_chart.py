@@ -1,16 +1,17 @@
 """Tests for the USD/JPY chart model and component."""
 
 import csv
+import unittest
 from contextlib import nullcontext
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from tempfile import TemporaryDirectory
-import unittest
 from unittest.mock import Mock, patch
 
 import chart
 import chart_app
+import daily_kline
 
 
 def write_klines(path: Path, count: int, *, reverse: bool = False) -> None:
@@ -64,14 +65,47 @@ class ChartDataTests(unittest.TestCase):
 
         self.assertEqual(len(points), 4)
 
-    def test_returns_empty_for_missing_or_empty_data(self):
+    def test_reports_missing_file_and_returns_empty_for_empty_data(self):
         with TemporaryDirectory() as directory:
             missing = Path(directory) / "missing.csv"
             empty = Path(directory) / "empty.csv"
             empty.touch()
 
-            self.assertEqual(chart.load_chart_points(missing), [])
+            with self.assertRaisesRegex(
+                chart.ChartDataMissingError,
+                "日足CSVが見つかりません",
+            ):
+                chart.load_chart_points(missing)
             self.assertEqual(chart.load_chart_points(empty), [])
+
+    def test_loads_csv_written_by_daily_kline_module(self):
+        bid = daily_kline.Ohlc(
+            open=Decimal("140.00"),
+            high=Decimal("141.00"),
+            low=Decimal("139.00"),
+            close=Decimal("140.50"),
+        )
+        ask = daily_kline.Ohlc(
+            open=Decimal("140.02"),
+            high=Decimal("141.02"),
+            low=Decimal("139.02"),
+            close=Decimal("140.52"),
+        )
+        kline = daily_kline.DailyKline(
+            open_time=datetime(2026, 1, 5, tzinfo=timezone.utc),
+            bid=bid,
+            ask=ask,
+        )
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "usd_jpy_1day.csv"
+            daily_kline.save_daily_klines([kline], path)
+
+            points = chart.load_chart_points(path)
+
+        self.assertEqual(
+            points,
+            [chart.ChartPoint(date(2026, 1, 5), Decimal("140.51"))],
+        )
 
     def test_reports_invalid_data_as_a_chart_error(self):
         with TemporaryDirectory() as directory:
@@ -140,6 +174,27 @@ class ChartComponentTests(unittest.TestCase):
             chart_app.render()
 
         info.assert_called_once_with("表示できる日足データがありません。")
+        altair_chart.assert_not_called()
+
+    def test_guides_daily_kline_fetch_when_csv_is_missing(self):
+        missing = chart.ChartDataMissingError(
+            "日足CSVが見つかりません: data/usd_jpy_1day.csv"
+        )
+        with (
+            patch.object(chart_app.st, "set_page_config"),
+            patch.object(chart_app.st, "title"),
+            patch.object(chart_app.st, "spinner", return_value=nullcontext()),
+            patch.object(chart_app.st, "info") as info,
+            patch.object(chart_app.st, "altair_chart") as altair_chart,
+            patch("chart_app.load_chart_points", side_effect=missing),
+        ):
+            chart_app.render()
+
+        info.assert_called_once_with(
+            "日足CSVが見つかりません: data/usd_jpy_1day.csv\n"
+            "先に `uv run python daily_kline.py --from-year 2023 --to-year 2026` "
+            "を実行して日足データを取得してください。"
+        )
         altair_chart.assert_not_called()
 
     def test_renders_error_state_without_chart(self):
