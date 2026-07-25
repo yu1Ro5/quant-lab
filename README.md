@@ -124,4 +124,12 @@ spread: 0.02
 uv run python -m unittest discover -v
 ```
 
-GitHub Actionsは `main` へのpush、`main` 向けPull Request、手動実行時に同じテストを実行します。平日の日次レート取得ワークフロー（日本時間9:00）も継続し、更新されたCSVをコミットします。
+GitHub Actionsは `main` へのpush、`main` 向けPull Request、手動実行時に同じテストを実行します。
+
+### 定期監視ワークフロー
+
+最新レート監視はGitHub Actionsで1時間ごとに実行されます。cronはUTC基準で、実行時間帯はUTCの月曜0:17から金曜23:17までです。JSTでは月曜9:17から土曜8:17までの毎時実行となり、GitHub Actionsから手動実行することもできます。
+
+各実行では、`USD_JPY_ALERT_THRESHOLD_PERCENT` が適用され、通常通知または変動アラート通知のどちらか1回をSlackへ送信します。比較対象は1時間前のレートではなく、CSV内にある直近の異なる過去日付の有効レートです。
+
+CSVは引き続き1日1件です。JSTでその日最初に成功した実行だけがレートを保存し、同日2回目以降の実行ではCSV保存とcommitをスキップします。CSVに変更がある場合だけ、ワークフローが更新をcommitします。

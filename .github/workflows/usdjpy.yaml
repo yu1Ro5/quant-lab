@@ -1,11 +1,17 @@
-name: USDJPY Daily
+name: USDJPY Hourly Monitor
 
 on:
   schedule:
-    # JST 9:00 = UTC 0:00
-    - cron: "0 0 * * 1-5"
+    # GitHub Actions cron schedules use UTC.
+    # UTC Monday 00:17–Friday 23:17
+    # JST Monday 09:17–Saturday 08:17
+    - cron: "17 * * * 1-5"
 
   workflow_dispatch:
+
+concurrency:
+  group: usdjpy-hourly-monitor
+  cancel-in-progress: false
 
 permissions:
   contents: write
