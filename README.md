@@ -67,6 +67,23 @@ uv run python main.py
 
 最新レートは `data/usd_jpy.csv` に追記されます（`data` ディレクトリがなければ自動作成されます）。同じ `rate_date` の行がすでに存在する場合は重複保存しません。
 
+## 日足チャート
+
+既存の日足取得処理が保存する `data/usd_jpy_1day.csv` を使い、USD/JPYの直近30営業日のClose価格を折れ線グラフで確認できます。新しいAPIリクエストは行わず、BIDとASKのCloseの仲値を日付順に表示します。30件未満やデータがない場合にも対応しています。
+
+```bash
+uv run streamlit run chart_app.py
+```
+
+ブラウザで表示された `USD/JPY` 画面は幅に合わせて伸縮し、日付とClose価格のグリッド、ポイントごとのツールチップを表示します。標準テーマはダークモードです。
+
+別のCSVを確認する場合は、既存の日足CSVと同じ形式のファイルを環境変数で指定できます。
+
+```bash
+USD_JPY_KLINE_PATH="data/usd_jpy_1day_recent.csv" \
+  uv run streamlit run chart_app.py
+```
+
 ## CSV履歴
 
 CSVは次の列で構成されます。
