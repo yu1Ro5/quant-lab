@@ -1,3 +1,5 @@
+# AGENTS
+
 ## Code Review Rules
 
 ### レビューコメントの言語
