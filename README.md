@@ -147,12 +147,18 @@ spread: 0.02
 
 ## テストとCI
 
-外部APIやSlackには接続せず、モックを使うテストを実行します。
+外部APIやSlackには接続せず、既存方針に合わせて `unittest` とモックを使うテストを実行します。
+
+```bash
+uv run python -m unittest discover -v
+uv run ruff check .
+uv run mypy .
+```
+
+Issue #7の品質条件としてpytestでの成功も確認します。テストコード自体は `unittest.TestCase` 形式であり、pytest固有のAPIには依存しません。
 
 ```bash
 uv run pytest
-uv run ruff check .
-uv run mypy .
 ```
 
 GitHub Actionsは `main` へのpush、`main` 向けPull Request、手動実行時に同じテストを実行します。
