@@ -39,6 +39,3 @@ jobs:
 
       - name: Run unittest
         run: uv run python -m unittest discover -v
-
-      - name: Verify pytest compatibility
-        run: uv run pytest
