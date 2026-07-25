@@ -128,7 +128,7 @@ GitHub Actionsは `main` へのpush、`main` 向けPull Request、手動実行�
 
 ### 定期監視ワークフロー
 
-最新レート監視はGitHub Actionsで1時間ごとに実行されます。cronはUTC基準で、実行時間帯はUTCの月曜0:00から金曜23:00までです。JSTでは月曜9:00から土曜8:00までの毎時実行となり、GitHub Actionsから手動実行することもできます。
+最新レート監視はGitHub Actionsで1時間ごとに実行されます。cronはUTC基準で、実行時間帯はUTCの月曜0:17から金曜23:17までです。JSTでは月曜9:17から土曜8:17までの毎時実行となり、GitHub Actionsから手動実行することもできます。
 
 各実行では、`USD_JPY_ALERT_THRESHOLD_PERCENT` が適用され、通常通知または変動アラート通知のどちらか1回をSlackへ送信します。比較対象は1時間前のレートではなく、CSV内にある直近の異なる過去日付の有効レートです。
 

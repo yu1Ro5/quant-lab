@@ -3,9 +3,9 @@ name: USDJPY Hourly Monitor
 on:
   schedule:
     # GitHub Actions cron schedules use UTC.
-    # UTC Monday 00:00–Friday 23:00
-    # JST Monday 09:00–Saturday 08:00
-    - cron: "0 * * * 1-5"
+    # UTC Monday 00:17–Friday 23:17
+    # JST Monday 09:17–Saturday 08:17
+    - cron: "17 * * * 1-5"
 
   workflow_dispatch:
 
