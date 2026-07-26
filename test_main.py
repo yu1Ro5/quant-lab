@@ -772,6 +772,30 @@ class PrepareDeliverTests(unittest.TestCase):
                 "2026-07-26T12:02:00+00:00",
             )
 
+    def test_deliver_rejects_stale_strong_alert_before_calling_slack(self):
+        for changed_field, changed_value in (
+            ("event_id", "replacement-event"),
+            ("message", "replacement message"),
+        ):
+            with self.subTest(changed_field=changed_field), TemporaryDirectory() as directory:
+                paths, envelope, _ = self.prepare(directory)
+                state = json.loads(paths.alert_state.read_text(encoding="utf-8"))
+                state["pending_alert"][changed_field] = changed_value
+                main.write_alert_state(paths.alert_state, state)
+
+                with patch("main.send_slack_notification") as send:
+                    code, output = main.deliver_envelope(
+                        envelope, token="token", channel="#alerts"
+                    )
+
+                self.assertEqual(code, main.EXIT_STATE_UPDATE_FAILED)
+                self.assertEqual(output["status"], "delivery_rejected")
+                self.assertFalse(output["state_commit_required"])
+                send.assert_not_called()
+                self.assertEqual(
+                    json.loads(paths.alert_state.read_text(encoding="utf-8")), state
+                )
+
     def test_failed_strong_alert_is_retried_but_failed_normal_is_not(self):
         with TemporaryDirectory() as directory:
             paths, envelope, _ = self.prepare(directory)

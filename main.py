@@ -905,6 +905,23 @@ def deliver_envelope(
     except EnvelopeError as error:
         return EXIT_ENVELOPE_ERROR, {"status": "envelope_error", "error": str(error)}
 
+    if envelope["delivery_kind"] == "strong_alert":
+        state_path = Path(envelope["alert_state_path"])
+        state, healthy = load_alert_state(state_path)
+        pending = state.get("pending_alert")
+        if (
+            not healthy
+            or not isinstance(pending, dict)
+            or pending.get("event_id") != envelope["event_id"]
+            or pending.get("message") != envelope["message"]
+        ):
+            return EXIT_STATE_UPDATE_FAILED, {
+                "status": "delivery_rejected",
+                "delivery_kind": "strong_alert",
+                "state_commit_required": False,
+                "error": "pending alert no longer matches the delivery envelope",
+            }
+
     try:
         sent = send_slack_notification(envelope["message"], token, channel)
     except Exception as error:
@@ -927,7 +944,7 @@ def deliver_envelope(
             "state_commit_required": False,
         }
 
-    state_path = Path(envelope["alert_state_path"])
+    # Reload after delivery so a concurrent prepare cannot be overwritten.
     state, healthy = load_alert_state(state_path)
     pending = state.get("pending_alert")
     if not healthy or not isinstance(pending, dict) or pending.get("event_id") != envelope["event_id"]:
