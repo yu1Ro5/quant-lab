@@ -1,8 +1,9 @@
 import csv
+import json
 import os
 import unittest
-from contextlib import redirect_stdout
-from datetime import datetime, timezone
+from contextlib import redirect_stderr
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from io import StringIO
 from pathlib import Path
@@ -450,7 +451,7 @@ class SlackNotificationTests(unittest.TestCase):
 
     def test_skips_without_secrets(self):
         output = StringIO()
-        with patch.dict(os.environ, {}, clear=True), redirect_stdout(output):
+        with patch.dict(os.environ, {}, clear=True), redirect_stderr(output):
             self.assertFalse(main.send_slack_notification("hello"))
         self.assertIn("skipping notification", output.getvalue())
 
@@ -461,91 +462,585 @@ class SlackNotificationTests(unittest.TestCase):
         client_class.return_value.chat_postMessage.assert_called_once_with(channel="#alerts", text="hello")
 
 
-class MainFlowTests(unittest.TestCase):
-    def test_rejects_invalid_threshold_before_external_or_csv_processing(self):
-        with (
-            patch.dict(
-                os.environ,
-                {"USD_JPY_ALERT_THRESHOLD_PERCENT": "NaN"},
-                clear=True,
-            ),
-            patch("main.get_usd_jpy") as get_quote,
-            patch("main.find_previous_rate") as find_rate,
-            patch("main.save_usd_jpy_rate") as save_rate,
-            patch("main.send_slack_notification") as send_message,
-            self.assertRaises(ValueError),
-        ):
-            main.main()
+def make_quote(
+    rate: str = "102",
+    source_timestamp: datetime | None = None,
+    market_status: str = "OPEN",
+) -> main.UsdJpyQuote:
+    source = source_timestamp or datetime(2026, 7, 26, 12, tzinfo=timezone.utc)
+    mid = Decimal(rate)
+    return main.UsdJpyQuote(
+        bid=mid - Decimal("0.005"),
+        ask=mid + Decimal("0.005"),
+        rate=mid,
+        spread=Decimal("0.010"),
+        source_timestamp=source,
+        rate_date=source.astimezone(main.JST).date().isoformat(),
+        market_status=market_status,
+    )
 
-        get_quote.assert_not_called()
-        find_rate.assert_not_called()
-        save_rate.assert_not_called()
-        send_message.assert_not_called()
 
-    def test_compares_before_saving_and_sends_the_generated_message(self):
-        ticker = ApiTests().get_ticker(response_payload())
-        events = []
-        output = StringIO()
+def make_paths(directory: str) -> main.DataPaths:
+    data = Path(directory) / "data"
+    return main.DataPaths(
+        daily_history=data / "usd_jpy.csv",
+        hourly_history=data / "usd_jpy_hourly.csv",
+        alert_state=data / "alert_state.json",
+    )
 
-        def find_previous_rate(*_args):
-            events.append("compare")
-            return Decimal("145.30")
 
-        def save_rate(*_args):
-            events.append("save")
-            return True
+def seed_comparison_history(paths: main.DataPaths) -> None:
+    paths.daily_history.parent.mkdir(parents=True, exist_ok=True)
+    paths.daily_history.write_text(
+        "fetched_at,rate_date,rate\n"
+        "old,2026-07-25,100\n",
+        encoding="utf-8",
+    )
+    previous = make_quote(
+        "100", datetime(2026, 7, 26, 11, tzinfo=timezone.utc)
+    )
+    main.save_usd_jpy_hourly_rate(
+        previous,
+        paths.hourly_history,
+        fetched_at=datetime(2026, 7, 26, 11, 1, tzinfo=timezone.utc),
+    )
 
-        def send_message(message):
-            events.append(("send", message))
-            return True
 
-        with (
-            patch("main.get_usd_jpy", return_value=ticker),
-            patch("main.find_previous_rate", side_effect=find_previous_rate),
-            patch("main.save_usd_jpy_rate", side_effect=save_rate),
-            patch("main.send_slack_notification", side_effect=send_message),
-            patch.dict(
-                os.environ,
-                {"USD_JPY_ALERT_THRESHOLD_PERCENT": "0.5"},
-                clear=True,
-            ),
-            redirect_stdout(output),
-        ):
-            main.main()
+class DataPathTests(unittest.TestCase):
+    def test_uses_legacy_defaults_when_environment_is_unset(self):
+        self.assertEqual(main.resolve_data_paths({}), main.DataPaths(
+            Path("data/usd_jpy.csv"),
+            Path("data/usd_jpy_hourly.csv"),
+            Path("data/alert_state.json"),
+        ))
 
-        self.assertEqual(events[:2], ["compare", "save"])
-        self.assertEqual(events[2][0], "send")
-        self.assertIn("前回比: +0.83円（+0.57%）", events[2][1])
-        self.assertIn("⚠️ USD/JPY変動アラート", events[2][1])
-        self.assertIn("Alert: yes", output.getvalue())
+    def test_data_directory_and_individual_paths_are_resolved_at_call_time(self):
+        environment = {"QUANT_LAB_DATA_DIR": "/tmp/first"}
         self.assertEqual(
-            sum(event[0] == "send" for event in events if isinstance(event, tuple)),
-            1,
+            main.resolve_data_paths(environment).daily_history,
+            Path("/tmp/first/usd_jpy.csv"),
         )
+        environment["QUANT_LAB_DATA_DIR"] = "/tmp/second"
+        environment["USD_JPY_HOURLY_HISTORY_PATH"] = "/tmp/custom/hourly.csv"
+        paths = main.resolve_data_paths(environment)
+        self.assertEqual(paths.daily_history, Path("/tmp/second/usd_jpy.csv"))
+        self.assertEqual(paths.hourly_history, Path("/tmp/custom/hourly.csv"))
+        self.assertEqual(paths.alert_state, Path("/tmp/second/alert_state.json"))
 
-    def test_prints_no_alert_and_sends_once_when_change_is_below_threshold(self):
-        ticker = ApiTests().get_ticker(response_payload())
-        output = StringIO()
-        with (
-            patch("main.get_usd_jpy", return_value=ticker),
-            patch("main.find_previous_rate", return_value=Decimal("145.30")),
-            patch("main.save_usd_jpy_rate", return_value=False),
-            patch("main.send_slack_notification") as send_message,
-            patch.dict(
-                os.environ,
-                {"USD_JPY_ALERT_THRESHOLD_PERCENT": "1.0"},
-                clear=True,
+    def test_save_default_path_observes_environment_changes(self):
+        with TemporaryDirectory() as directory:
+            with patch.dict(
+                os.environ, {"QUANT_LAB_DATA_DIR": directory}, clear=True
+            ):
+                main.save_usd_jpy_rate(make_quote())
+            self.assertTrue((Path(directory) / "usd_jpy.csv").exists())
+
+
+class HourlyHistoryTests(unittest.TestCase):
+    def test_creates_expected_header_and_keeps_first_value_in_bucket(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "hourly.csv"
+            first = make_quote(
+                "100", datetime(2026, 7, 26, 12, 5, tzinfo=timezone.utc)
+            )
+            second = make_quote(
+                "101", datetime(2026, 7, 26, 12, 55, tzinfo=timezone.utc)
+            )
+            self.assertTrue(main.save_usd_jpy_hourly_rate(first, path))
+            self.assertFalse(main.save_usd_jpy_hourly_rate(second, path))
+            with path.open(newline="", encoding="utf-8") as file:
+                reader = csv.DictReader(file)
+                rows = list(reader)
+                self.assertEqual(reader.fieldnames, main.HOURLY_HISTORY_COLUMNS)
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["rate"], "100")
+            self.assertEqual(
+                rows[0]["bucket_start_utc"], "2026-07-26T12:00:00+00:00"
+            )
+
+    def test_retains_exact_90_day_boundary_and_prunes_older_rows(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "hourly.csv"
+            current = datetime(2026, 7, 26, 12, 30, tzinfo=timezone.utc)
+            for timestamp, rate in (
+                (current - timedelta(days=90), "99"),
+                (current - timedelta(days=90, hours=1), "98"),
+            ):
+                main.save_usd_jpy_hourly_rate(make_quote(rate, timestamp), path)
+            main.save_usd_jpy_hourly_rate(make_quote("100", current), path)
+            with path.open(newline="", encoding="utf-8") as file:
+                rows = list(csv.DictReader(file))
+            self.assertEqual(
+                [row["rate"] for row in rows],
+                ["99", "100"],
+            )
+
+    def test_rejects_bad_header_without_overwriting_file(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "hourly.csv"
+            original = "wrong,header\nvalue,value\n"
+            path.write_text(original, encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "unsupported header"):
+                main.save_usd_jpy_hourly_rate(make_quote(), path)
+            self.assertEqual(path.read_text(encoding="utf-8"), original)
+
+    def test_rejects_existing_empty_file_without_initializing_it(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "hourly.csv"
+            path.touch()
+            with self.assertRaisesRegex(ValueError, "empty"):
+                main.save_usd_jpy_hourly_rate(make_quote(), path)
+            self.assertEqual(path.stat().st_size, 0)
+
+    def test_comparison_boundaries_and_exclusions(self):
+        current = datetime(2026, 7, 26, 12, 30, tzinfo=timezone.utc)
+        cases = (
+            (timedelta(minutes=45), True),
+            (timedelta(minutes=60), True),
+            (timedelta(minutes=90), True),
+            (timedelta(minutes=44, seconds=59), False),
+            (timedelta(minutes=90, seconds=1), False),
+        )
+        for difference, expected in cases:
+            with self.subTest(difference=difference), TemporaryDirectory() as directory:
+                path = Path(directory) / "hourly.csv"
+                main.save_usd_jpy_hourly_rate(
+                    make_quote("100", current - difference), path
+                )
+                result = main.find_hourly_reference(path, current)
+                self.assertIs(result is not None, expected)
+
+    def test_selects_closest_to_60_minutes_and_newer_on_tie(self):
+        current = datetime(2026, 7, 26, 12, 5, tzinfo=timezone.utc)
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "hourly.csv"
+            for difference, rate in (
+                (timedelta(minutes=70), "70"),
+                (timedelta(minutes=60), "60"),
+            ):
+                main.save_usd_jpy_hourly_rate(
+                    make_quote(rate, current - difference), path
+                )
+            reference = main.find_hourly_reference(path, current)
+            self.assertEqual(reference[1], Decimal("60"))
+
+        current = datetime(2026, 7, 26, 12, tzinfo=timezone.utc)
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "hourly.csv"
+            for difference, rate in (
+                (timedelta(minutes=70), "70"),
+                (timedelta(minutes=50), "50"),
+            ):
+                main.save_usd_jpy_hourly_rate(
+                    make_quote(rate, current - difference), path
+                )
+            reference = main.find_hourly_reference(path, current)
+            self.assertEqual(reference[1], Decimal("50"))
+
+    def test_uses_source_timestamp_and_skips_invalid_rows(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "hourly.csv"
+            path.write_text(
+                ",".join(main.HOURLY_HISTORY_COLUMNS)
+                + "\n"
+                + "2026-07-26T11:30:00+00:00,invalid,invalid,100,99,101,2,OPEN\n"
+                + "2026-07-26T20:00:00+00:00,2026-07-26T11:30:00+00:00,"
+                + "2026-07-26T11:00:00+00:00,101,100,102,2,OPEN\n",
+                encoding="utf-8",
+            )
+            result = main.find_hourly_reference(
+                path, datetime(2026, 7, 26, 12, 30, tzinfo=timezone.utc)
+            )
+            self.assertEqual(result[1], Decimal("101"))
+
+    def test_excludes_candidate_from_the_current_utc_bucket(self):
+        current = datetime(2026, 7, 26, 12, 59, tzinfo=timezone.utc)
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "hourly.csv"
+            main.save_usd_jpy_hourly_rate(
+                make_quote(
+                    "100", datetime(2026, 7, 26, 12, 14, tzinfo=timezone.utc)
+                ),
+                path,
+            )
+            self.assertIsNone(main.find_hourly_reference(path, current))
+
+
+class IndependentThresholdTests(unittest.TestCase):
+    def test_defaults_empty_values_and_independent_values(self):
+        for value in (None, "", "   "):
+            environment = {}
+            if value is not None:
+                environment = {
+                    main.HOURLY_ALERT_THRESHOLD_ENVIRONMENT_VARIABLE: value,
+                    main.DAILY_ALERT_THRESHOLD_ENVIRONMENT_VARIABLE: value,
+                }
+            thresholds = main.get_alert_thresholds(environment)
+            self.assertEqual(thresholds.hourly, Decimal("0.3"))
+            self.assertEqual(thresholds.daily, Decimal("1.0"))
+        self.assertEqual(
+            main.get_alert_thresholds(
+                {
+                    main.HOURLY_ALERT_THRESHOLD_ENVIRONMENT_VARIABLE: "0.4",
+                    main.DAILY_ALERT_THRESHOLD_ENVIRONMENT_VARIABLE: "1.2",
+                }
             ),
-            redirect_stdout(output),
-        ):
-            main.main()
-
-        self.assertIn("Alert: no", output.getvalue())
-        send_message.assert_called_once()
-        self.assertNotIn(
-            "⚠️ USD/JPY変動アラート",
-            send_message.call_args.args[0],
+            main.AlertThresholds(Decimal("0.4"), Decimal("1.2")),
         )
+
+    def test_rejects_each_invalid_setting_before_api_or_writes(self):
+        invalid_values = ("bad", "NaN", "Infinity", "0", "-1")
+        for variable in (
+            main.HOURLY_ALERT_THRESHOLD_ENVIRONMENT_VARIABLE,
+            main.DAILY_ALERT_THRESHOLD_ENVIRONMENT_VARIABLE,
+        ):
+            for value in invalid_values:
+                with (
+                    self.subTest(variable=variable, value=value),
+                    TemporaryDirectory() as directory,
+                    patch.dict(os.environ, {variable: value}, clear=True),
+                    patch("main.get_usd_jpy") as get_quote,
+                    patch("main.save_usd_jpy_rate") as save_daily,
+                    patch("main.send_slack_notification") as send,
+                    self.assertRaises(ValueError),
+                ):
+                    main.prepare_delivery(Path(directory) / "envelope.json")
+                get_quote.assert_not_called()
+                save_daily.assert_not_called()
+                send.assert_not_called()
+
+
+class PrepareDeliverTests(unittest.TestCase):
+    thresholds = main.AlertThresholds(Decimal("0.5"), Decimal("0.5"))
+
+    def prepare(
+        self,
+        directory: str,
+        quote: main.UsdJpyQuote | None = None,
+        now: datetime | None = None,
+    ) -> tuple[main.DataPaths, Path, main.PrepareResult]:
+        paths = make_paths(directory)
+        if not paths.daily_history.exists():
+            seed_comparison_history(paths)
+        envelope = Path(directory) / "delivery.json"
+        result = main.prepare_delivery(
+            envelope,
+            paths=paths,
+            thresholds=self.thresholds,
+            ticker=quote or make_quote(),
+            now=now or datetime(2026, 7, 26, 12, 1, tzinfo=timezone.utc),
+        )
+        return paths, envelope, result
+
+    def test_prepare_never_calls_slack_and_combines_two_alerts(self):
+        with TemporaryDirectory() as directory, patch(
+            "main.send_slack_notification"
+        ) as send:
+            paths, envelope, result = self.prepare(directory)
+            send.assert_not_called()
+            self.assertEqual(result.delivery_kind, "strong_alert")
+            value = json.loads(envelope.read_text(encoding="utf-8"))
+            self.assertEqual(value["triggered_comparisons"], ["hourly", "daily"])
+            self.assertIn("アラート対象: 1時間前比、日次比", value["message"])
+            self.assertIn("1時間比較基準: 2026-07-26T11:00:00+00:00", value["message"])
+            self.assertIn("日次比較基準: 2026-07-25", value["message"])
+            self.assertTrue(paths.daily_history.exists())
+            self.assertTrue(paths.hourly_history.exists())
+            self.assertTrue(paths.alert_state.exists())
+
+    def test_deliver_calls_slack_once_and_only_success_finalizes_strong_alert(self):
+        with TemporaryDirectory() as directory:
+            paths, envelope, _ = self.prepare(directory)
+            with patch("main.send_slack_notification", return_value=True) as send:
+                code, output = main.deliver_envelope(
+                    envelope,
+                    token="token",
+                    channel="#alerts",
+                    now=datetime(2026, 7, 26, 12, 2, tzinfo=timezone.utc),
+                )
+            self.assertEqual(code, main.EXIT_OK)
+            self.assertTrue(output["state_commit_required"])
+            send.assert_called_once()
+            state = json.loads(paths.alert_state.read_text(encoding="utf-8"))
+            self.assertIsNone(state["pending_alert"])
+            self.assertEqual(
+                state["comparisons"]["hourly"]["last_notified_at"],
+                "2026-07-26T12:02:00+00:00",
+            )
+            self.assertEqual(
+                state["comparisons"]["daily"]["last_notified_at"],
+                "2026-07-26T12:02:00+00:00",
+            )
+
+    def test_failed_strong_alert_is_retried_but_failed_normal_is_not(self):
+        with TemporaryDirectory() as directory:
+            paths, envelope, _ = self.prepare(directory)
+            with patch(
+                "main.send_slack_notification", side_effect=RuntimeError("Slack down")
+            ) as send:
+                code, _ = main.deliver_envelope(envelope, token="x", channel="y")
+            self.assertEqual(code, main.EXIT_DELIVERY_FAILED)
+            send.assert_called_once()
+            pending = json.loads(
+                paths.alert_state.read_text(encoding="utf-8")
+            )["pending_alert"]
+            self.assertIsNotNone(pending)
+
+            _, retry_envelope, retry_result = self.prepare(
+                directory,
+                make_quote(
+                    "100.1",
+                    datetime(2026, 7, 26, 13, tzinfo=timezone.utc),
+                    market_status="CLOSE",
+                ),
+                datetime(2026, 7, 26, 13, 1, tzinfo=timezone.utc),
+            )
+            self.assertEqual(retry_result.delivery_kind, "strong_alert")
+            self.assertEqual(
+                json.loads(retry_envelope.read_text(encoding="utf-8"))["event_id"],
+                pending["event_id"],
+            )
+
+        with TemporaryDirectory() as directory:
+            paths = make_paths(directory)
+            seed_comparison_history(paths)
+            envelope = Path(directory) / "normal.json"
+            main.prepare_delivery(
+                envelope,
+                paths=paths,
+                thresholds=main.AlertThresholds(Decimal("10"), Decimal("10")),
+                ticker=make_quote("100.1"),
+                now=datetime(2026, 7, 26, 12, 1, tzinfo=timezone.utc),
+            )
+            with patch("main.send_slack_notification", return_value=False):
+                code, _ = main.deliver_envelope(envelope, token="x", channel="y")
+            self.assertEqual(code, main.EXIT_DELIVERY_FAILED)
+            self.assertIsNone(
+                json.loads(paths.alert_state.read_text(encoding="utf-8"))[
+                    "pending_alert"
+                ]
+            )
+
+    def test_cooldown_rearm_and_comparison_independence(self):
+        with TemporaryDirectory() as directory:
+            paths, envelope, _ = self.prepare(directory)
+            with patch("main.send_slack_notification", return_value=True):
+                main.deliver_envelope(
+                    envelope,
+                    token="x",
+                    channel="y",
+                    now=datetime(2026, 7, 26, 12, 2, tzinfo=timezone.utc),
+                )
+            _, second_envelope, second = self.prepare(
+                directory,
+                make_quote("104", datetime(2026, 7, 26, 13, tzinfo=timezone.utc)),
+                datetime(2026, 7, 26, 13, 1, tzinfo=timezone.utc),
+            )
+            self.assertEqual(second.delivery_kind, "normal")
+
+            self.prepare(
+                directory,
+                make_quote(
+                    "100.1", datetime(2026, 7, 26, 14, tzinfo=timezone.utc)
+                ),
+                datetime(2026, 7, 26, 14, 1, tzinfo=timezone.utc),
+            )
+            _, rearmed_envelope, rearmed = self.prepare(
+                directory,
+                make_quote("104", datetime(2026, 7, 26, 15, tzinfo=timezone.utc)),
+                datetime(2026, 7, 26, 15, 1, tzinfo=timezone.utc),
+            )
+            self.assertEqual(rearmed.delivery_kind, "strong_alert")
+            self.assertIn(
+                "daily",
+                json.loads(rearmed_envelope.read_text(encoding="utf-8"))[
+                    "triggered_comparisons"
+                ],
+            )
+
+        with TemporaryDirectory() as directory:
+            paths = make_paths(directory)
+            seed_comparison_history(paths)
+            state = main.default_alert_state()
+            state["comparisons"]["hourly"] = {
+                "is_active": True,
+                "last_notified_at": "2026-07-26T11:30:00+00:00",
+            }
+            main.write_alert_state(paths.alert_state, state)
+            envelope = Path(directory) / "independent.json"
+            main.prepare_delivery(
+                envelope,
+                paths=paths,
+                thresholds=self.thresholds,
+                ticker=make_quote(),
+                now=datetime(2026, 7, 26, 12, 1, tzinfo=timezone.utc),
+            )
+            self.assertEqual(
+                json.loads(envelope.read_text(encoding="utf-8"))[
+                    "triggered_comparisons"
+                ],
+                ["daily"],
+            )
+
+    def test_three_hour_boundary_allows_renotification(self):
+        with TemporaryDirectory() as directory:
+            paths = make_paths(directory)
+            seed_comparison_history(paths)
+            state = main.default_alert_state()
+            for name in ("hourly", "daily"):
+                state["comparisons"][name] = {
+                    "is_active": True,
+                    "last_notified_at": "2026-07-26T09:01:00+00:00",
+                }
+            main.write_alert_state(paths.alert_state, state)
+            envelope = Path(directory) / "delivery.json"
+            main.prepare_delivery(
+                envelope,
+                paths=paths,
+                thresholds=self.thresholds,
+                ticker=make_quote(),
+                now=datetime(2026, 7, 26, 12, 1, tzinfo=timezone.utc),
+            )
+            self.assertEqual(
+                json.loads(envelope.read_text(encoding="utf-8"))[
+                    "triggered_comparisons"
+                ],
+                ["hourly", "daily"],
+            )
+
+    def test_close_saves_and_notifies_normally_without_changing_active_state(self):
+        with TemporaryDirectory() as directory:
+            paths = make_paths(directory)
+            seed_comparison_history(paths)
+            state = main.default_alert_state()
+            state["comparisons"]["hourly"]["is_active"] = True
+            state["comparisons"]["daily"]["is_active"] = True
+            main.write_alert_state(paths.alert_state, state)
+            envelope = Path(directory) / "close.json"
+            result = main.prepare_delivery(
+                envelope,
+                paths=paths,
+                thresholds=self.thresholds,
+                ticker=make_quote("102", market_status="CLOSE"),
+                now=datetime(2026, 7, 26, 12, 1, tzinfo=timezone.utc),
+            )
+            updated = json.loads(paths.alert_state.read_text(encoding="utf-8"))
+            self.assertEqual(result.delivery_kind, "normal")
+            self.assertTrue(result.daily_saved)
+            self.assertTrue(result.hourly_saved)
+            self.assertTrue(updated["comparisons"]["hourly"]["is_active"])
+            self.assertTrue(updated["comparisons"]["daily"]["is_active"])
+            self.assertIn(
+                "市場ステータス: CLOSE",
+                json.loads(envelope.read_text(encoding="utf-8"))["message"],
+            )
+
+    def test_missing_comparisons_do_not_clear_active_state(self):
+        with TemporaryDirectory() as directory:
+            paths = make_paths(directory)
+            state = main.default_alert_state()
+            state["comparisons"]["hourly"]["is_active"] = True
+            state["comparisons"]["daily"]["is_active"] = True
+            main.write_alert_state(paths.alert_state, state)
+            envelope = Path(directory) / "missing.json"
+            result = main.prepare_delivery(
+                envelope,
+                paths=paths,
+                thresholds=self.thresholds,
+                ticker=make_quote("100"),
+                now=datetime(2026, 7, 26, 12, 1, tzinfo=timezone.utc),
+            )
+            updated = json.loads(paths.alert_state.read_text(encoding="utf-8"))
+            self.assertEqual(result.delivery_kind, "normal")
+            self.assertTrue(updated["comparisons"]["hourly"]["is_active"])
+            self.assertTrue(updated["comparisons"]["daily"]["is_active"])
+
+    def test_corrupt_state_is_not_overwritten_and_suppresses_strong_alert(self):
+        with TemporaryDirectory() as directory:
+            paths = make_paths(directory)
+            seed_comparison_history(paths)
+            original = "{broken"
+            paths.alert_state.write_text(original, encoding="utf-8")
+            envelope = Path(directory) / "corrupt.json"
+            with patch("main.send_slack_notification") as send:
+                result = main.prepare_delivery(
+                    envelope,
+                    paths=paths,
+                    thresholds=self.thresholds,
+                    ticker=make_quote(),
+                    now=datetime(2026, 7, 26, 12, 1, tzinfo=timezone.utc),
+                )
+            self.assertFalse(result.state_healthy)
+            self.assertEqual(result.delivery_kind, "normal")
+            self.assertEqual(paths.alert_state.read_text(encoding="utf-8"), original)
+            self.assertTrue(result.daily_saved)
+            self.assertTrue(result.hourly_saved)
+            send.assert_not_called()
+
+    def test_new_pending_alert_replaces_old_pending_with_latest_only(self):
+        with TemporaryDirectory() as directory:
+            paths = make_paths(directory)
+            seed_comparison_history(paths)
+            state = main.default_alert_state()
+            state["pending_alert"] = {
+                "event_id": "old",
+                "occurred_at": "2026-07-26T10:00:00+00:00",
+                "triggered_comparisons": ["hourly"],
+                "message": "old message",
+            }
+            main.write_alert_state(paths.alert_state, state)
+            envelope = Path(directory) / "latest.json"
+            main.prepare_delivery(
+                envelope,
+                paths=paths,
+                thresholds=self.thresholds,
+                ticker=make_quote(),
+                now=datetime(2026, 7, 26, 12, 1, tzinfo=timezone.utc),
+            )
+            updated = json.loads(paths.alert_state.read_text(encoding="utf-8"))
+            self.assertNotEqual(updated["pending_alert"]["event_id"], "old")
+            self.assertNotIn("old message", updated["pending_alert"]["message"])
+            self.assertEqual(
+                json.loads(envelope.read_text(encoding="utf-8"))["event_id"],
+                updated["pending_alert"]["event_id"],
+            )
+
+    def test_bad_hourly_file_does_not_block_daily_save_or_normal_envelope(self):
+        with TemporaryDirectory() as directory:
+            paths = make_paths(directory)
+            paths.daily_history.parent.mkdir(parents=True, exist_ok=True)
+            paths.daily_history.write_text(
+                "fetched_at,rate_date,rate\nold,2026-07-25,100\n",
+                encoding="utf-8",
+            )
+            original = "bad,header\n"
+            paths.hourly_history.write_text(original, encoding="utf-8")
+            envelope = Path(directory) / "delivery.json"
+            result = main.prepare_delivery(
+                envelope,
+                paths=paths,
+                thresholds=self.thresholds,
+                ticker=make_quote("100.1"),
+                now=datetime(2026, 7, 26, 12, 1, tzinfo=timezone.utc),
+            )
+            self.assertTrue(result.daily_saved)
+            self.assertFalse(result.hourly_saved)
+            self.assertEqual(paths.hourly_history.read_text(encoding="utf-8"), original)
+            self.assertEqual(result.delivery_kind, "normal")
+
+    def test_message_keeps_market_fields_and_marks_missing_comparisons(self):
+        message = main.build_monitoring_message(make_quote(), None, None)
+        for text in (
+            "USD/JPY 仲値: 102",
+            "bid: 101.995",
+            "ask: 102.005",
+            "spread: 0.010",
+            "基準時刻: 2026-07-26T12:00:00+00:00",
+            "市場ステータス: OPEN",
+            "1時間前比: 比較データなし",
+            "日次比: 比較データなし",
+        ):
+            self.assertIn(text, message)
 
 
 if __name__ == "__main__":
