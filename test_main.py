@@ -796,6 +796,19 @@ class PrepareDeliverTests(unittest.TestCase):
                 "2026-07-26T12:02:00+00:00",
             )
 
+    def test_non_utf8_envelope_returns_envelope_error_without_calling_slack(self):
+        with TemporaryDirectory() as directory:
+            envelope = Path(directory) / "invalid-encoding.json"
+            envelope.write_bytes(b"\xff")
+
+            with patch("main.send_slack_notification") as send:
+                code, output = main.deliver_envelope(envelope)
+
+            self.assertEqual(code, main.EXIT_ENVELOPE_ERROR)
+            self.assertEqual(output["status"], "envelope_error")
+            self.assertIn("cannot read delivery envelope", output["error"])
+            send.assert_not_called()
+
     def test_deliver_rejects_stale_strong_alert_before_calling_slack(self):
         for changed_field, changed_value in (
             ("event_id", "replacement-event"),
@@ -1139,6 +1152,32 @@ class PrepareDeliverTests(unittest.TestCase):
             self.assertTrue(result.daily_saved)
             self.assertTrue(result.hourly_saved)
             send.assert_not_called()
+
+    def test_non_utf8_state_is_not_overwritten_and_allows_normal_envelope(self):
+        with TemporaryDirectory() as directory:
+            paths = make_paths(directory)
+            seed_comparison_history(paths)
+            original = b"\xff"
+            paths.alert_state.write_bytes(original)
+            envelope = Path(directory) / "invalid-encoding-state.json"
+
+            result = main.prepare_delivery(
+                envelope,
+                paths=paths,
+                thresholds=self.thresholds,
+                ticker=make_quote(),
+                now=datetime(2026, 7, 26, 12, 1, tzinfo=timezone.utc),
+            )
+
+            self.assertFalse(result.state_healthy)
+            self.assertEqual(result.delivery_kind, "normal")
+            self.assertEqual(paths.alert_state.read_bytes(), original)
+            self.assertTrue(result.daily_saved)
+            self.assertTrue(result.hourly_saved)
+            self.assertNotIn(
+                "⚠️ USD/JPY変動アラート",
+                json.loads(envelope.read_text(encoding="utf-8"))["message"],
+            )
 
     def test_missing_required_state_keys_are_not_overwritten(self):
         invalid_states = (

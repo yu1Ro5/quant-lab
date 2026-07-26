@@ -700,7 +700,7 @@ def load_alert_state(path: str | Path) -> tuple[dict[str, Any], bool]:
         with state_path.open(encoding="utf-8") as file:
             state = json.load(file)
         return _validate_alert_state(state), True
-    except (OSError, json.JSONDecodeError, StateFileError) as error:
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, StateFileError) as error:
         print(
             f"ERROR: alert state is invalid; strong alerts are suppressed and "
             f"{state_path} was not overwritten: {error}",
@@ -930,7 +930,7 @@ def _load_envelope(path: str | Path) -> dict[str, Any]:
     try:
         with Path(path).open(encoding="utf-8") as file:
             envelope = json.load(file)
-    except (OSError, json.JSONDecodeError) as error:
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
         raise EnvelopeError(f"cannot read delivery envelope: {error}") from error
     if (
         not isinstance(envelope, dict)
