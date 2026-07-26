@@ -796,6 +796,120 @@ class PrepareDeliverTests(unittest.TestCase):
                     json.loads(paths.alert_state.read_text(encoding="utf-8")), state
                 )
 
+    def test_delivery_claim_prevents_concurrent_duplicate_send(self):
+        with TemporaryDirectory() as directory:
+            paths, envelope, _ = self.prepare(directory)
+            nested_result = []
+            delivered_at = datetime(2026, 7, 26, 12, 2, tzinfo=timezone.utc)
+
+            def send_once(*_args):
+                nested_result.append(
+                    main.deliver_envelope(
+                        envelope,
+                        token="token",
+                        channel="#alerts",
+                        now=delivered_at,
+                    )
+                )
+                return True
+
+            with patch(
+                "main.send_slack_notification", side_effect=send_once
+            ) as send:
+                code, output = main.deliver_envelope(
+                    envelope,
+                    token="token",
+                    channel="#alerts",
+                    now=delivered_at,
+                )
+
+            self.assertEqual(code, main.EXIT_OK)
+            self.assertTrue(output["state_commit_required"])
+            send.assert_called_once()
+            self.assertEqual(
+                nested_result,
+                [
+                    (
+                        main.EXIT_STATE_UPDATE_FAILED,
+                        {
+                            "status": "delivery_rejected",
+                            "delivery_kind": "strong_alert",
+                            "state_commit_required": False,
+                            "error": "pending alert is already being delivered",
+                        },
+                    )
+                ],
+            )
+            self.assertIsNone(
+                json.loads(paths.alert_state.read_text(encoding="utf-8"))[
+                    "pending_alert"
+                ]
+            )
+
+    def test_prepare_does_not_replace_pending_alert_during_delivery(self):
+        with TemporaryDirectory() as directory:
+            paths, envelope, _ = self.prepare(directory)
+            original_envelope = json.loads(envelope.read_text(encoding="utf-8"))
+            concurrent_envelope = Path(directory) / "concurrent.json"
+
+            def prepare_while_sending(*_args):
+                result = main.prepare_delivery(
+                    concurrent_envelope,
+                    paths=paths,
+                    thresholds=self.thresholds,
+                    ticker=make_quote(
+                        "105",
+                        datetime(2026, 7, 26, 12, 2, tzinfo=timezone.utc),
+                    ),
+                    now=datetime(2026, 7, 26, 12, 3, tzinfo=timezone.utc),
+                )
+                self.assertEqual(result.delivery_kind, "strong_alert")
+                return True
+
+            with patch(
+                "main.send_slack_notification", side_effect=prepare_while_sending
+            ):
+                code, _ = main.deliver_envelope(
+                    envelope,
+                    token="token",
+                    channel="#alerts",
+                    now=datetime(2026, 7, 26, 12, 2, tzinfo=timezone.utc),
+                )
+
+            self.assertEqual(code, main.EXIT_OK)
+            self.assertEqual(
+                json.loads(concurrent_envelope.read_text(encoding="utf-8"))[
+                    "event_id"
+                ],
+                original_envelope["event_id"],
+            )
+            self.assertIsNone(
+                json.loads(paths.alert_state.read_text(encoding="utf-8"))[
+                    "pending_alert"
+                ]
+            )
+
+    def test_expired_delivery_claim_can_be_retried(self):
+        with TemporaryDirectory() as directory:
+            paths, envelope, _ = self.prepare(directory)
+            state = json.loads(paths.alert_state.read_text(encoding="utf-8"))
+            state["pending_alert"]["delivery_claim"] = {
+                "claim_id": "abandoned",
+                "claimed_at": "2026-07-26T11:46:59+00:00",
+            }
+            main.write_alert_state(paths.alert_state, state)
+
+            with patch("main.send_slack_notification", return_value=True) as send:
+                code, _ = main.deliver_envelope(
+                    envelope,
+                    token="token",
+                    channel="#alerts",
+                    now=datetime(2026, 7, 26, 12, 2, tzinfo=timezone.utc),
+                )
+
+            self.assertEqual(code, main.EXIT_OK)
+            send.assert_called_once()
+
     def test_failed_strong_alert_is_retried_but_failed_normal_is_not(self):
         with TemporaryDirectory() as directory:
             paths, envelope, _ = self.prepare(directory)
@@ -809,6 +923,7 @@ class PrepareDeliverTests(unittest.TestCase):
                 paths.alert_state.read_text(encoding="utf-8")
             )["pending_alert"]
             self.assertIsNotNone(pending)
+            self.assertNotIn("delivery_claim", pending)
 
             _, retry_envelope, retry_result = self.prepare(
                 directory,

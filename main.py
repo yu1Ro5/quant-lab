@@ -1,9 +1,13 @@
 import argparse
 import csv
+import fcntl
 import hashlib
 import json
 import os
 import sys
+import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
@@ -49,6 +53,7 @@ HOURLY_ALERT_THRESHOLD_ENVIRONMENT_VARIABLE = "USD_JPY_HOURLY_ALERT_THRESHOLD_PE
 DAILY_ALERT_THRESHOLD_ENVIRONMENT_VARIABLE = "USD_JPY_DAILY_ALERT_THRESHOLD_PERCENT"
 ALERT_THRESHOLD_ENVIRONMENT_VARIABLE = "USD_JPY_ALERT_THRESHOLD_PERCENT"
 ALERT_COOLDOWN = timedelta(hours=3)
+DELIVERY_CLAIM_TTL = timedelta(minutes=15)
 HOURLY_RETENTION = timedelta(days=90)
 JST = ZoneInfo("Asia/Tokyo")
 
@@ -658,6 +663,18 @@ def _validate_alert_state(state: object) -> dict[str, Any]:
             _parse_stored_timestamp(pending.get("occurred_at"), "occurred_at")
         except ValueError as error:
             raise StateFileError("alert state pending_alert occurred_at is invalid") from error
+        delivery_claim = pending.get("delivery_claim")
+        if delivery_claim is not None:
+            if (
+                not isinstance(delivery_claim, dict)
+                or not isinstance(delivery_claim.get("claim_id"), str)
+                or not delivery_claim["claim_id"]
+            ):
+                raise StateFileError("alert state delivery claim is invalid")
+            try:
+                _parse_stored_timestamp(delivery_claim.get("claimed_at"), "claimed_at")
+            except ValueError as error:
+                raise StateFileError("alert state delivery claim claimed_at is invalid") from error
     return state
 
 
@@ -697,6 +714,39 @@ def _atomic_write_json(path: Path, value: object) -> None:
 def write_alert_state(path: str | Path, state: dict[str, Any]) -> None:
     _validate_alert_state(state)
     _atomic_write_json(Path(path), state)
+
+
+@contextmanager
+def _alert_state_lock(path: str | Path) -> Iterator[None]:
+    state_path = Path(path)
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = state_path.with_name(f"{state_path.name}.lock")
+    with lock_path.open("a", encoding="utf-8") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
+def _delivery_claim_is_active(pending: dict[str, Any], now: datetime) -> bool:
+    delivery_claim = pending.get("delivery_claim")
+    if not isinstance(delivery_claim, dict):
+        return False
+    claimed_at = _parse_stored_timestamp(delivery_claim["claimed_at"], "claimed_at")
+    return now - claimed_at < DELIVERY_CLAIM_TTL
+
+
+def _pending_matches_envelope(
+    pending: object, envelope: dict[str, Any]
+) -> bool:
+    return (
+        isinstance(pending, dict)
+        and pending.get("event_id") == envelope["event_id"]
+        and pending.get("message") == envelope["message"]
+        and pending.get("triggered_comparisons")
+        == envelope["triggered_comparisons"]
+    )
 
 
 def _strong_alert_due(
@@ -786,39 +836,48 @@ def prepare_delivery(
                 file=sys.stderr,
             )
 
-    state, state_healthy = load_alert_state(configured_paths.alert_state)
-    triggered: list[str] = []
-    comparison_values = {
-        "hourly": (hourly, configured_thresholds.hourly),
-        "daily": (daily, configured_thresholds.daily),
-    }
-    if state_healthy:
-        for comparison_name, (comparison, threshold) in comparison_values.items():
-            comparison_state = state["comparisons"][comparison_name]
-            if quote.market_status == "CLOSE" or comparison is None:
-                continue
-            if not should_alert(comparison.change.percent, threshold):
-                comparison_state["is_active"] = False
-                continue
-            if _strong_alert_due(comparison_state, prepared_at):
-                triggered.append(comparison_name)
-            comparison_state["is_active"] = True
-
-        if triggered:
-            strong_message = build_monitoring_message(
-                quote,
-                hourly,
-                daily,
-                triggered_comparisons=triggered,
-                thresholds=configured_thresholds,
+    with _alert_state_lock(configured_paths.alert_state):
+        state, state_healthy = load_alert_state(configured_paths.alert_state)
+        triggered: list[str] = []
+        comparison_values = {
+            "hourly": (hourly, configured_thresholds.hourly),
+            "daily": (daily, configured_thresholds.daily),
+        }
+        if state_healthy:
+            pending_before_prepare = state.get("pending_alert")
+            claim_active = (
+                isinstance(pending_before_prepare, dict)
+                and _delivery_claim_is_active(pending_before_prepare, prepared_at)
             )
-            state["pending_alert"] = {
-                "event_id": _event_id(prepared_at, triggered, strong_message),
-                "occurred_at": _utc_iso(prepared_at),
-                "triggered_comparisons": triggered,
-                "message": strong_message,
-            }
-        write_alert_state(configured_paths.alert_state, state)
+            if isinstance(pending_before_prepare, dict) and not claim_active:
+                pending_before_prepare.pop("delivery_claim", None)
+
+            for comparison_name, (comparison, threshold) in comparison_values.items():
+                comparison_state = state["comparisons"][comparison_name]
+                if quote.market_status == "CLOSE" or comparison is None:
+                    continue
+                if not should_alert(comparison.change.percent, threshold):
+                    comparison_state["is_active"] = False
+                    continue
+                if _strong_alert_due(comparison_state, prepared_at):
+                    triggered.append(comparison_name)
+                comparison_state["is_active"] = True
+
+            if triggered and not claim_active:
+                strong_message = build_monitoring_message(
+                    quote,
+                    hourly,
+                    daily,
+                    triggered_comparisons=triggered,
+                    thresholds=configured_thresholds,
+                )
+                state["pending_alert"] = {
+                    "event_id": _event_id(prepared_at, triggered, strong_message),
+                    "occurred_at": _utc_iso(prepared_at),
+                    "triggered_comparisons": triggered,
+                    "message": strong_message,
+                }
+            write_alert_state(configured_paths.alert_state, state)
 
     pending = state["pending_alert"] if state_healthy else None
     if pending is not None:
@@ -905,26 +964,52 @@ def deliver_envelope(
     except EnvelopeError as error:
         return EXIT_ENVELOPE_ERROR, {"status": "envelope_error", "error": str(error)}
 
+    state_path: Path | None = None
+    claim_id: str | None = None
+    operation_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     if envelope["delivery_kind"] == "strong_alert":
         state_path = Path(envelope["alert_state_path"])
-        state, healthy = load_alert_state(state_path)
-        pending = state.get("pending_alert")
-        if (
-            not healthy
-            or not isinstance(pending, dict)
-            or pending.get("event_id") != envelope["event_id"]
-            or pending.get("message") != envelope["message"]
-        ):
+        claim_id = uuid.uuid4().hex
+        try:
+            with _alert_state_lock(state_path):
+                state, healthy = load_alert_state(state_path)
+                pending = state.get("pending_alert")
+                if (
+                    not healthy
+                    or not isinstance(pending, dict)
+                    or not _pending_matches_envelope(pending, envelope)
+                ):
+                    return EXIT_STATE_UPDATE_FAILED, {
+                        "status": "delivery_rejected",
+                        "delivery_kind": "strong_alert",
+                        "state_commit_required": False,
+                        "error": "pending alert no longer matches the delivery envelope",
+                    }
+                if _delivery_claim_is_active(pending, operation_at):
+                    return EXIT_STATE_UPDATE_FAILED, {
+                        "status": "delivery_rejected",
+                        "delivery_kind": "strong_alert",
+                        "state_commit_required": False,
+                        "error": "pending alert is already being delivered",
+                    }
+                pending["delivery_claim"] = {
+                    "claim_id": claim_id,
+                    "claimed_at": _utc_iso(operation_at),
+                }
+                write_alert_state(state_path, state)
+        except (OSError, StateFileError, ValueError) as error:
             return EXIT_STATE_UPDATE_FAILED, {
                 "status": "delivery_rejected",
                 "delivery_kind": "strong_alert",
                 "state_commit_required": False,
-                "error": "pending alert no longer matches the delivery envelope",
+                "error": str(error),
             }
 
     try:
         sent = send_slack_notification(envelope["message"], token, channel)
     except Exception as error:
+        if state_path is not None and claim_id is not None:
+            _release_delivery_claim(state_path, envelope["event_id"], claim_id)
         return EXIT_DELIVERY_FAILED, {
             "status": "delivery_failed",
             "delivery_kind": envelope["delivery_kind"],
@@ -932,6 +1017,8 @@ def deliver_envelope(
             "state_commit_required": False,
         }
     if not sent:
+        if state_path is not None and claim_id is not None:
+            _release_delivery_claim(state_path, envelope["event_id"], claim_id)
         return EXIT_DELIVERY_FAILED, {
             "status": "delivery_skipped",
             "delivery_kind": envelope["delivery_kind"],
@@ -944,22 +1031,34 @@ def deliver_envelope(
             "state_commit_required": False,
         }
 
-    # Reload after delivery so a concurrent prepare cannot be overwritten.
-    state, healthy = load_alert_state(state_path)
-    pending = state.get("pending_alert")
-    if not healthy or not isinstance(pending, dict) or pending.get("event_id") != envelope["event_id"]:
-        return EXIT_STATE_UPDATE_FAILED, {
-            "status": "sent_state_update_failed",
-            "delivery_kind": "strong_alert",
-            "state_commit_required": False,
-            "error": "pending alert no longer matches the delivered event",
-        }
-    sent_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
-    for comparison_name in pending["triggered_comparisons"]:
-        state["comparisons"][comparison_name]["last_notified_at"] = _utc_iso(sent_at)
-    state["pending_alert"] = None
+    assert state_path is not None
+    assert claim_id is not None
     try:
-        write_alert_state(state_path, state)
+        with _alert_state_lock(state_path):
+            state, healthy = load_alert_state(state_path)
+            pending = state.get("pending_alert")
+            delivery_claim = (
+                pending.get("delivery_claim") if isinstance(pending, dict) else None
+            )
+            if (
+                not healthy
+                or not isinstance(pending, dict)
+                or not _pending_matches_envelope(pending, envelope)
+                or not isinstance(delivery_claim, dict)
+                or delivery_claim.get("claim_id") != claim_id
+            ):
+                return EXIT_STATE_UPDATE_FAILED, {
+                    "status": "sent_state_update_failed",
+                    "delivery_kind": "strong_alert",
+                    "state_commit_required": False,
+                    "error": "pending alert no longer matches the delivered event",
+                }
+            for comparison_name in pending["triggered_comparisons"]:
+                state["comparisons"][comparison_name]["last_notified_at"] = _utc_iso(
+                    operation_at
+                )
+            state["pending_alert"] = None
+            write_alert_state(state_path, state)
     except (OSError, StateFileError, ValueError) as error:
         return EXIT_STATE_UPDATE_FAILED, {
             "status": "sent_state_update_failed",
@@ -973,6 +1072,31 @@ def deliver_envelope(
         "state_commit_required": True,
         "alert_state_path": str(state_path),
     }
+
+
+def _release_delivery_claim(
+    state_path: Path, event_id: str, claim_id: str
+) -> None:
+    try:
+        with _alert_state_lock(state_path):
+            state, healthy = load_alert_state(state_path)
+            pending = state.get("pending_alert")
+            if (
+                not healthy
+                or not isinstance(pending, dict)
+                or pending.get("event_id") != event_id
+            ):
+                return
+            delivery_claim = pending.get("delivery_claim")
+            if (
+                isinstance(delivery_claim, dict)
+                and delivery_claim.get("claim_id") == claim_id
+            ):
+                pending.pop("delivery_claim")
+                write_alert_state(state_path, state)
+    except (OSError, StateFileError, ValueError):
+        # The claim expires, so a failed cleanup cannot block delivery permanently.
+        return
 
 
 def _print_json(value: object) -> None:

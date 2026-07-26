@@ -60,7 +60,7 @@ UV_CACHE_DIR=/tmp/quant-lab-uv-cache \
 | `0` | deliver | Slack送信成功。JSONの `state_commit_required` を確認 |
 | `3` | deliver | Slack送信失敗、または認証情報不足 |
 | `4` | deliver | envelopeが読めない、またはschema不正 |
-| `5` | deliver | Slack送信後の強いアラート状態更新に失敗 |
+| `5` | deliver | 古いenvelope・並行deliveryを送信前に拒否、またはSlack送信後の強いアラート状態更新に失敗 |
 
 prepare成功例:
 
@@ -156,9 +156,15 @@ version 1のschemaです。
   "event_id": "決定的な24文字の公開ID",
   "occurred_at": "2026-07-26T02:17:00+00:00",
   "triggered_comparisons": ["hourly"],
-  "message": "Slackへ送る完成済みメッセージ"
+  "message": "Slackへ送る完成済みメッセージ",
+  "delivery_claim": {
+    "claim_id": "送信処理ごとの一意なID",
+    "claimed_at": "2026-07-26T02:18:00+00:00"
+  }
 }
 ```
+
+`delivery_claim` はdeliverがSlack送信前に排他的に記録する任意フィールドです。有効なclaimがある間は、同じenvelopeの別deliverを送信前に拒否し、並行prepareもpendingを置き換えません。送信失敗時はclaimを解除し、処理が異常終了しても15分後に再取得できます。
 
 比較状態は1時間・日次で独立し、クールダウンは3時間です。閾値未満に戻った後の再超過は3時間以内でも新規イベントになります。`CLOSE` と比較不能では既存の `is_active` を解除しません。`last_notified_at` は強いSlackアラートの送信成功後だけ更新します。
 
