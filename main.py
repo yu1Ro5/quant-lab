@@ -503,6 +503,21 @@ def _bucket_start(value: datetime) -> datetime:
     return value.astimezone(timezone.utc).replace(minute=0, second=0, microsecond=0)
 
 
+def _parse_hourly_row_timestamps(
+    row: dict[str, str],
+) -> tuple[datetime, datetime] | None:
+    try:
+        source_timestamp = _parse_stored_timestamp(
+            row["source_timestamp"], "source_timestamp"
+        )
+    except ValueError:
+        return None
+    bucket = _parse_stored_timestamp(row["bucket_start_utc"], "bucket_start_utc")
+    if bucket != _bucket_start(source_timestamp):
+        raise ValueError("Hourly CSV contains an inconsistent bucket_start_utc")
+    return source_timestamp, bucket
+
+
 def _read_hourly_history(csv_path: Path) -> list[dict[str, str]]:
     if not csv_path.exists():
         return []
@@ -521,15 +536,10 @@ def _read_hourly_history(csv_path: Path) -> list[dict[str, str]]:
             or any(value is None for value in row.values())
         ):
             raise ValueError("Hourly CSV contains a structurally invalid row")
-        try:
-            source_timestamp = _parse_stored_timestamp(
-                row["source_timestamp"], "source_timestamp"
-            )
-            bucket = _parse_stored_timestamp(row["bucket_start_utc"], "bucket_start_utc")
-        except ValueError:
+        timestamps = _parse_hourly_row_timestamps(row)
+        if timestamps is None:
             continue
-        if bucket != _bucket_start(source_timestamp):
-            raise ValueError("Hourly CSV contains an inconsistent bucket_start_utc")
+        _, bucket = timestamps
         if bucket in seen_buckets:
             raise ValueError("Hourly CSV contains duplicate UTC buckets")
         seen_buckets.add(bucket)
@@ -543,19 +553,20 @@ def find_hourly_reference(
     current_bucket = _bucket_start(current)
     candidates: list[tuple[timedelta, datetime, Decimal]] = []
     for row in _read_hourly_history(Path(csv_path)):
+        timestamps = _parse_hourly_row_timestamps(row)
+        if timestamps is None:
+            continue
+        source_timestamp, bucket = timestamps
         try:
-            source_timestamp = _parse_stored_timestamp(
-                row["source_timestamp"], "source_timestamp"
-            )
             rate = Decimal(row["rate"])
-        except (InvalidOperation, ValueError):
+        except InvalidOperation:
             continue
         if not rate.is_finite() or rate <= 0 or source_timestamp > current:
             continue
         difference = current - source_timestamp
         if (
             timedelta(minutes=45) <= difference <= timedelta(minutes=90)
-            and _bucket_start(source_timestamp) != current_bucket
+            and bucket != current_bucket
         ):
             candidates.append(
                 (abs(difference - timedelta(minutes=60)), source_timestamp, rate)
@@ -581,12 +592,11 @@ def save_usd_jpy_hourly_rate(
     retained_rows: list[dict[str, str]] = []
     boundary = current_source - HOURLY_RETENTION
     for row in rows:
-        try:
-            source = _parse_stored_timestamp(row["source_timestamp"], "source_timestamp")
-            bucket = _bucket_start(source)
-        except ValueError:
+        timestamps = _parse_hourly_row_timestamps(row)
+        if timestamps is None:
             retained_rows.append(row)
             continue
+        source, bucket = timestamps
         existing_buckets.add(bucket)
         if source >= boundary or source > current_source:
             retained_rows.append(row)
@@ -626,16 +636,20 @@ def default_alert_state() -> dict[str, Any]:
 def _validate_alert_state(state: object) -> dict[str, Any]:
     if not isinstance(state, dict) or state.get("version") != 1:
         raise StateFileError("alert state must use schema version 1")
+    if "pending_alert" not in state:
+        raise StateFileError("alert state pending_alert is required")
     comparisons = state.get("comparisons")
     if not isinstance(comparisons, dict):
         raise StateFileError("alert state comparisons must be an object")
     for comparison_name in ("hourly", "daily"):
         comparison = comparisons.get(comparison_name)
-        if not isinstance(comparison, dict) or not isinstance(
-            comparison.get("is_active"), bool
+        if (
+            not isinstance(comparison, dict)
+            or not isinstance(comparison.get("is_active"), bool)
+            or "last_notified_at" not in comparison
         ):
             raise StateFileError(f"alert state {comparison_name} is invalid")
-        last_notified_at = comparison.get("last_notified_at")
+        last_notified_at = comparison["last_notified_at"]
         if last_notified_at is not None:
             try:
                 _parse_stored_timestamp(last_notified_at, "last_notified_at")
@@ -643,7 +657,7 @@ def _validate_alert_state(state: object) -> dict[str, Any]:
                 raise StateFileError(
                     f"alert state {comparison_name} last_notified_at is invalid"
                 ) from error
-    pending = state.get("pending_alert")
+    pending = state["pending_alert"]
     if pending is not None:
         if (
             not isinstance(pending, dict)

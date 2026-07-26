@@ -74,7 +74,7 @@ deliver成功例:
 {"alert_state_path": "/data/alert_state.json", "delivery_kind": "strong_alert", "state_commit_required": true, "status": "sent"}
 ```
 
-通常通知の成功では `state_commit_required` は `false` です。終了コード5ではSlack送信自体は成功済みですが、pendingを消せなかったため次回に重複送信される可能性があります。
+通常通知の成功では `state_commit_required` は `false` です。終了コード5の場合はJSONの `status` を確認してください。`delivery_rejected` は古いenvelopeまたは並行deliveryをSlack送信前に拒否した状態、`sent_state_update_failed` はSlack送信済みですがpendingを消せず、次回に重複送信される可能性がある状態です。
 
 ## 環境変数
 

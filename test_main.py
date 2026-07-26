@@ -653,6 +653,30 @@ class HourlyHistoryTests(unittest.TestCase):
             )
             self.assertEqual(result[1], Decimal("101"))
 
+    def test_invalid_bucket_timestamp_stops_hourly_processing_without_overwrite(self):
+        current = datetime(2026, 7, 26, 12, 30, tzinfo=timezone.utc)
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "hourly.csv"
+            original = (
+                ",".join(main.HOURLY_HISTORY_COLUMNS)
+                + "\n"
+                + "2026-07-26T11:31:00+00:00,2026-07-26T11:30:00+00:00,"
+                + "not-a-time,100,99,101,2,OPEN\n"
+            )
+            path.write_text(original, encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "bucket_start_utc"):
+                main.find_hourly_reference(path, current)
+            with self.assertRaisesRegex(ValueError, "bucket_start_utc"):
+                main.save_usd_jpy_hourly_rate(
+                    make_quote(
+                        "101",
+                        datetime(2026, 7, 26, 11, 45, tzinfo=timezone.utc),
+                    ),
+                    path,
+                )
+            self.assertEqual(path.read_text(encoding="utf-8"), original)
+
     def test_excludes_candidate_from_the_current_utc_bucket(self):
         current = datetime(2026, 7, 26, 12, 59, tzinfo=timezone.utc)
         with TemporaryDirectory() as directory:
@@ -1115,6 +1139,53 @@ class PrepareDeliverTests(unittest.TestCase):
             self.assertTrue(result.daily_saved)
             self.assertTrue(result.hourly_saved)
             send.assert_not_called()
+
+    def test_missing_required_state_keys_are_not_overwritten(self):
+        invalid_states = (
+            {
+                "version": 1,
+                "comparisons": {
+                    "hourly": {"is_active": False, "last_notified_at": None},
+                    "daily": {"is_active": False, "last_notified_at": None},
+                },
+            },
+            {
+                "version": 1,
+                "comparisons": {
+                    "hourly": {"is_active": False},
+                    "daily": {"is_active": False, "last_notified_at": None},
+                },
+                "pending_alert": None,
+            },
+        )
+        for invalid_state in invalid_states:
+            with self.subTest(invalid_state=invalid_state), TemporaryDirectory() as directory:
+                paths = make_paths(directory)
+                seed_comparison_history(paths)
+                original = json.dumps(invalid_state)
+                paths.alert_state.write_text(original, encoding="utf-8")
+                envelope = Path(directory) / "invalid-state.json"
+
+                result = main.prepare_delivery(
+                    envelope,
+                    paths=paths,
+                    thresholds=self.thresholds,
+                    ticker=make_quote(),
+                    now=datetime(2026, 7, 26, 12, 1, tzinfo=timezone.utc),
+                )
+
+                self.assertFalse(result.state_healthy)
+                self.assertEqual(result.delivery_kind, "normal")
+                self.assertEqual(
+                    paths.alert_state.read_text(encoding="utf-8"),
+                    original,
+                )
+                self.assertTrue(result.daily_saved)
+                self.assertTrue(result.hourly_saved)
+                message = json.loads(envelope.read_text(encoding="utf-8"))[
+                    "message"
+                ]
+                self.assertNotIn("⚠️ USD/JPY変動アラート", message)
 
     def test_new_pending_alert_replaces_old_pending_with_latest_only(self):
         with TemporaryDirectory() as directory:
