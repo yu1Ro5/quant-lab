@@ -202,7 +202,9 @@ data/alert_state.json
 
 deliver成功後、JSONの `state_commit_required` が `true` の場合だけ `data/alert_state.json` を再度commitします。envelopeはcommitしません。強いアラート失敗時はpendingを残すため、最初のcommit済み状態を変更しません。通常通知失敗時も追加commitはありません。
 
-最小構成例です。これは後続の `quant-lab-data` 側で作るworkflowの参考であり、このリポジトリの既存workflowはまだ切り替えません。
+旧 `quant-lab` workflowはscheduleを停止し、`workflow_dispatch` による手動実行専用になりました。定期実行は `quant-lab-data` へ移行中です。`quant-lab-data` 側のscheduleは移行確認後に別作業で有効化するため、現時点ではまだ有効化していません。
+
+最小構成例です。これは後続の `quant-lab-data` 側で作るworkflowの参考です。
 
 ```yaml
 jobs:
