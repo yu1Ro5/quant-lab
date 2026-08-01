@@ -1,4 +1,4 @@
-"""Sequential backtest engine."""
+"""ローソク足を日時順に処理するバックテストエンジン。"""
 
 import pandas as pd
 
@@ -7,7 +7,7 @@ from .strategy import Signal, Strategy
 
 
 class BacktestEngine:
-    """Connect a strategy to a broker while avoiding same-close execution."""
+    """終値で判断し、次の始値でStrategyとBrokerをつないで売買する。"""
 
     def __init__(self, strategy: Strategy, broker: Broker) -> None:
         self.strategy = strategy

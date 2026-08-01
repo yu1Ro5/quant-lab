@@ -1,4 +1,4 @@
-"""Broker abstraction and an in-memory implementation for backtests."""
+"""Brokerの抽象インターフェースとバックテスト用のメモリ内実装。"""
 
 import math
 from abc import ABC, abstractmethod
@@ -9,7 +9,7 @@ import pandas as pd
 
 @dataclass(frozen=True)
 class Trade:
-    """One completed long trade."""
+    """購入から売却まで完了した1回分の取引。"""
 
     entry_time: pd.Timestamp
     entry_price: float
@@ -19,33 +19,33 @@ class Trade:
 
 
 class Broker(ABC):
-    """Interface that can later be implemented by a paper or live broker."""
+    """将来ペーパートレードや実売買へ差し替えるためのインターフェース。"""
 
     @property
     @abstractmethod
     def has_position(self) -> bool:
-        """Return whether one long position is currently open."""
+        """現在1株を保有しているか返す。"""
 
     @property
     @abstractmethod
     def trades(self) -> tuple[Trade, ...]:
-        """Return completed trades."""
+        """購入から売却まで完了した取引を返す。"""
 
     @abstractmethod
     def buy(self, timestamp: pd.Timestamp, price: float) -> None:
-        """Open one long position."""
+        """指定日時と価格で1株を購入する。"""
 
     @abstractmethod
     def sell(self, timestamp: pd.Timestamp, price: float) -> None:
-        """Close the current long position."""
+        """保有中の1株を指定日時と価格で売却する。"""
 
     @abstractmethod
     def close_position(self, timestamp: pd.Timestamp, price: float) -> None:
-        """Close an open position, doing nothing when already flat."""
+        """株を保有していれば売却し、保有していなければ何もしない。"""
 
 
 class DummyBroker(Broker):
-    """A broker that records one-share trades without sending orders."""
+    """外部へ注文を送らず、1株分の売買を内部に記録するBroker。"""
 
     def __init__(self) -> None:
         self._entry_time: pd.Timestamp | None = None

@@ -1,4 +1,4 @@
-"""Module entry point for ``python -m quant_lab_backtest``."""
+"""``python -m quant_lab_backtest`` で実行するための入口。"""
 
 from .cli import main
 

@@ -1,4 +1,4 @@
-"""Parquet loading and validation for OHLCV backtest data."""
+"""OHLCVバックテストデータのParquet読込と検証。"""
 
 from pathlib import Path
 
@@ -11,11 +11,11 @@ NUMERIC_COLUMNS = (*PRICE_COLUMNS, "Volume")
 
 
 class DataValidationError(ValueError):
-    """Raised when a backtest input cannot be used safely."""
+    """バックテストに使用できない入力データを検出した場合のエラー。"""
 
 
 def load_parquet(path: str | Path) -> pd.DataFrame:
-    """Load a Parquet file and return validated, chronological OHLCV data."""
+    """Parquetを読み込み、検証済みのOHLCVデータを日時順で返す。"""
     parquet_path = Path(path)
     if not parquet_path.is_file():
         raise DataValidationError(f"Parquetファイルが見つかりません: {parquet_path}")
@@ -31,7 +31,7 @@ def load_parquet(path: str | Path) -> pd.DataFrame:
 
 
 def validate_data(data: pd.DataFrame) -> pd.DataFrame:
-    """Validate and normalize an OHLCV DataFrame."""
+    """OHLCVのDataFrameを検証し、バックテスト用の形式に整える。"""
     if data.empty:
         raise DataValidationError("Parquetデータが空です")
 

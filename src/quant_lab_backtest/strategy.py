@@ -1,4 +1,4 @@
-"""Replaceable strategy interface and a minimal breakout example."""
+"""差し替え可能な戦略インターフェースと最小限の高値突破戦略。"""
 
 from abc import ABC, abstractmethod
 from enum import Enum, auto
@@ -7,7 +7,7 @@ import pandas as pd
 
 
 class Signal(Enum):
-    """Action requested by a strategy after a candle has closed."""
+    """ローソク足の終了後に戦略が決める次回の動作。"""
 
     BUY = auto()
     SELL = auto()
@@ -15,7 +15,7 @@ class Signal(Enum):
 
 
 class Strategy(ABC):
-    """Interface for a strategy that only decides the next action."""
+    """次に行う売買だけを判断する戦略インターフェース。"""
 
     @abstractmethod
     def generate_signal(
@@ -24,11 +24,11 @@ class Strategy(ABC):
         current_bar: pd.Series,
         has_position: bool,
     ) -> Signal:
-        """Return the action to execute at the next candle's open."""
+        """次のローソク足の始値で実行する動作を返す。"""
 
 
 class BreakoutStrategy(Strategy):
-    """Buy above the prior high and sell below the prior low."""
+    """終値が前回高値を上回れば買い、前回安値を下回れば売る戦略。"""
 
     def generate_signal(
         self,

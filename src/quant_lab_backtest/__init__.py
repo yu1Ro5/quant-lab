@@ -1,4 +1,4 @@
-"""Public interfaces for the single-stock backtest MVP."""
+"""単一銘柄バックテストMVPの公開インターフェース。"""
 
 from .broker import Broker, DummyBroker, Trade
 from .engine import BacktestEngine

@@ -1,4 +1,4 @@
-"""Generate the committed example and test-fixture Parquet files."""
+"""Git管理するサンプル用・テスト用Parquetを生成する。"""
 
 import argparse
 from collections.abc import Sequence
@@ -13,7 +13,7 @@ COLUMNS = ["Datetime", "Open", "High", "Low", "Close", "Volume"]
 
 
 def sample_data() -> pd.DataFrame:
-    """Return readable example data that produces two completed trades."""
+    """売買が2回完了する、説明しやすいサンプルデータを返す。"""
     return pd.DataFrame(
         [
             ("2026-07-01", 1000, 1020, 990, 1010, 100_000),
@@ -29,7 +29,7 @@ def sample_data() -> pd.DataFrame:
 
 
 def fixture_data() -> pd.DataFrame:
-    """Return compact fixture data covering normal and final closes."""
+    """通常売却とデータ最終日の売却を確認できるテストデータを返す。"""
     return pd.DataFrame(
         [
             ("2026-08-03", 500, 510, 495, 505, 20_000),

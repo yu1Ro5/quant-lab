@@ -1,4 +1,4 @@
-"""Command-line orchestration for the backtest MVP."""
+"""バックテストMVPを実行するコマンドライン処理。"""
 
 import argparse
 import sys

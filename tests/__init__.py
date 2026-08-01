@@ -1,1 +1,1 @@
-"""Tests for code organized under src/."""
+"""src配下に追加したコードのテスト。"""
