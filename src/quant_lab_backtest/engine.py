@@ -22,8 +22,8 @@ class BacktestEngine:
         final_bar: pd.Series | None = None
 
         for position, (_, current_bar) in enumerate(data.iterrows()):
-            timestamp = pd.Timestamp(current_bar["Datetime"])
-            open_price = float(current_bar["Open"])
+            timestamp = pd.Timestamp(current_bar["datetime"])
+            open_price = float(current_bar["open"])
 
             if pending_signal is Signal.BUY:
                 self.broker.buy(timestamp, open_price)
@@ -42,6 +42,6 @@ class BacktestEngine:
 
         if final_bar is not None:
             self.broker.close_position(
-                pd.Timestamp(final_bar["Datetime"]), float(final_bar["Close"])
+                pd.Timestamp(final_bar["datetime"]), float(final_bar["close"])
             )
         return list(self.broker.trades)

@@ -14,8 +14,8 @@ FIXTURE_PATH = PROJECT_ROOT / "tests/fixtures/backtest_sample.parquet"
 
 def frame(rows: list[tuple[str, float, float, float, float]]) -> pd.DataFrame:
     return pd.DataFrame(
-        rows, columns=["Datetime", "Open", "High", "Low", "Close"]
-    ).assign(Datetime=lambda data: pd.to_datetime(data["Datetime"], utc=True))
+        rows, columns=["datetime", "open", "high", "low", "close"]
+    ).assign(datetime=lambda data: pd.to_datetime(data["datetime"], utc=True))
 
 
 class BacktestEngineTests(unittest.TestCase):

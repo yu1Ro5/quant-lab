@@ -9,7 +9,7 @@ import pandas as pd
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SAMPLE_PATH = PROJECT_ROOT / "examples/data/japanese_stock_sample.parquet"
 DEFAULT_FIXTURE_PATH = PROJECT_ROOT / "tests/fixtures/backtest_sample.parquet"
-COLUMNS = ["Datetime", "Open", "High", "Low", "Close", "Volume"]
+COLUMNS = ["datetime", "open", "high", "low", "close", "volume"]
 
 
 def sample_data() -> pd.DataFrame:
@@ -25,7 +25,7 @@ def sample_data() -> pd.DataFrame:
             ("2026-07-09", 1045, 1060, 1040, 1055, 150_000),
         ],
         columns=COLUMNS,
-    ).assign(Datetime=lambda frame: pd.to_datetime(frame["Datetime"], utc=True))
+    ).assign(datetime=lambda frame: pd.to_datetime(frame["datetime"], utc=True))
 
 
 def fixture_data() -> pd.DataFrame:
@@ -41,7 +41,7 @@ def fixture_data() -> pd.DataFrame:
             ("2026-08-11", 512, 520, 510, 518, 26_000),
         ],
         columns=COLUMNS,
-    ).assign(Datetime=lambda frame: pd.to_datetime(frame["Datetime"], utc=True))
+    ).assign(datetime=lambda frame: pd.to_datetime(frame["datetime"], utc=True))
 
 
 def write_parquet(data: pd.DataFrame, path: Path) -> None:

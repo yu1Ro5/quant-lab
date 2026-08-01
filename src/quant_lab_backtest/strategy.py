@@ -36,9 +36,9 @@ class BreakoutStrategy(Strategy):
         current_bar: pd.Series,
         has_position: bool,
     ) -> Signal:
-        current_close = float(current_bar["Close"])
-        if not has_position and current_close > float(previous_bar["High"]):
+        current_close = float(current_bar["close"])
+        if not has_position and current_close > float(previous_bar["high"]):
             return Signal.BUY
-        if has_position and current_close < float(previous_bar["Low"]):
+        if has_position and current_close < float(previous_bar["low"]):
             return Signal.SELL
         return Signal.HOLD

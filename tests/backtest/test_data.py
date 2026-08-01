@@ -11,13 +11,13 @@ from quant_lab_backtest.data import DataValidationError, load_parquet, validate_
 def valid_data() -> pd.DataFrame:
     return pd.DataFrame(
         {
-            "Datetime": ["2026-01-02", "2026-01-01"],
-            "Open": [101.0, 100.0],
-            "High": [103.0, 102.0],
-            "Low": [100.0, 99.0],
-            "Close": [102.0, 101.0],
-            "Volume": [1100.0, 1000.0],
-            "Memo": ["second", "first"],
+            "datetime": ["2026-01-02", "2026-01-01"],
+            "open": [101.0, 100.0],
+            "high": [103.0, 102.0],
+            "low": [100.0, 99.0],
+            "close": [102.0, 101.0],
+            "volume": [1100.0, 1000.0],
+            "memo": ["second", "first"],
         }
     )
 
@@ -30,9 +30,9 @@ class LoadParquetTests(unittest.TestCase):
 
             result = load_parquet(path)
 
-        self.assertEqual(list(result["Close"]), [101, 102])
-        self.assertEqual(list(result["Memo"]), ["first", "second"])
-        self.assertIsInstance(result.loc[0, "Datetime"], pd.Timestamp)
+        self.assertEqual(list(result["close"]), [101, 102])
+        self.assertEqual(list(result["memo"]), ["first", "second"])
+        self.assertIsInstance(result.loc[0, "datetime"], pd.Timestamp)
 
     def test_rejects_missing_and_broken_files(self) -> None:
         with TemporaryDirectory() as directory:
@@ -51,14 +51,14 @@ class ValidateDataTests(unittest.TestCase):
         with self.assertRaisesRegex(DataValidationError, "空です"):
             validate_data(pd.DataFrame())
 
-        with self.assertRaisesRegex(DataValidationError, "Volume"):
-            validate_data(valid_data().drop(columns="Volume"))
+        with self.assertRaisesRegex(DataValidationError, "volume"):
+            validate_data(valid_data().drop(columns="volume"))
 
     def test_rejects_invalid_or_missing_values(self) -> None:
         cases = (
-            ("Datetime", "not-a-date"),
-            ("Open", None),
-            ("Close", "not-a-number"),
+            ("datetime", "not-a-date"),
+            ("open", None),
+            ("close", "not-a-number"),
         )
         for column, value in cases:
             data = valid_data()
@@ -71,15 +71,15 @@ class ValidateDataTests(unittest.TestCase):
 
     def test_rejects_duplicate_datetimes(self) -> None:
         data = valid_data()
-        data.loc[1, "Datetime"] = data.loc[0, "Datetime"]
+        data.loc[1, "datetime"] = data.loc[0, "datetime"]
         with self.assertRaisesRegex(DataValidationError, "重複"):
             validate_data(data)
 
     def test_rejects_non_finite_non_positive_and_negative_volume(self) -> None:
         cases = (
-            ("High", np.inf, "有限"),
-            ("Open", 0, "0より大きい"),
-            ("Volume", -1, "0以上"),
+            ("high", np.inf, "有限"),
+            ("open", 0, "0より大きい"),
+            ("volume", -1, "0以上"),
         )
         for column, value, message in cases:
             data = valid_data()
@@ -91,13 +91,13 @@ class ValidateDataTests(unittest.TestCase):
 
     def test_rejects_inconsistent_high_and_low(self) -> None:
         high = valid_data()
-        high.loc[0, "High"] = 100
-        with self.assertRaisesRegex(DataValidationError, "High"):
+        high.loc[0, "high"] = 100
+        with self.assertRaisesRegex(DataValidationError, "high"):
             validate_data(high)
 
         low = valid_data()
-        low.loc[0, "Low"] = 102.5
-        with self.assertRaisesRegex(DataValidationError, "Low"):
+        low.loc[0, "low"] = 102.5
+        with self.assertRaisesRegex(DataValidationError, "low"):
             validate_data(low)
 
 
