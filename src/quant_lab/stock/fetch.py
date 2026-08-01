@@ -167,6 +167,16 @@ def format_ohlcv(
     numeric_values = selected[["open", "high", "low", "close"]].to_numpy()
     if not np.isfinite(numeric_values).all() or not np.isfinite(volume).all():
         raise StockFetchError("価格または出来高を数値型に変換できません")
+    if (selected[["open", "high", "low", "close"]] <= 0).any(axis=None):
+        raise StockFetchError("価格は0より大きい値にしてください")
+    if (volume < 0).any():
+        raise StockFetchError("出来高は0以上にしてください")
+    highest_price = selected[["open", "low", "close"]].max(axis=1)
+    lowest_price = selected[["open", "high", "close"]].min(axis=1)
+    if (selected["high"] < highest_price).any():
+        raise StockFetchError("highがOHLCの最大値を下回っています")
+    if (selected["low"] > lowest_price).any():
+        raise StockFetchError("lowがOHLCの最小値を上回っています")
     if not np.equal(volume, np.floor(volume)).all():
         raise StockFetchError("出来高を整数型に変換できません")
     try:

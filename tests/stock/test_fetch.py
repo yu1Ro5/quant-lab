@@ -172,6 +172,28 @@ class StockFetchDataTests(unittest.TestCase):
         with self.assertRaisesRegex(fetch.StockFetchError, "整数型"):
             fetch.format_ohlcv(invalid_volume, date(2026, 7, 28), date(2026, 7, 29))
 
+    def test_rejects_invalid_ohlcv_ranges(self) -> None:
+        invalid_price = sample_frame()
+        invalid_price.iloc[1, 0] = 0
+        with self.assertRaisesRegex(fetch.StockFetchError, "価格は0より大きい"):
+            fetch.format_ohlcv(invalid_price, date(2026, 7, 28), date(2026, 7, 29))
+
+        invalid_volume = sample_frame()
+        invalid_volume.iloc[1, 4] = -1
+        with self.assertRaisesRegex(fetch.StockFetchError, "出来高は0以上"):
+            fetch.format_ohlcv(invalid_volume, date(2026, 7, 28), date(2026, 7, 29))
+
+        invalid_high = sample_frame()
+        invalid_high.iloc[1, 1] = 140
+        with self.assertRaisesRegex(fetch.StockFetchError, "highがOHLCの最大値"):
+            fetch.format_ohlcv(invalid_high, date(2026, 7, 28), date(2026, 7, 29))
+
+        invalid_low = sample_frame()
+        invalid_low.iloc[1, 1] = 170
+        invalid_low.iloc[1, 2] = 160
+        with self.assertRaisesRegex(fetch.StockFetchError, "lowがOHLCの最小値"):
+            fetch.format_ohlcv(invalid_low, date(2026, 7, 28), date(2026, 7, 29))
+
     def test_wraps_download_errors_and_rejects_empty_download(self) -> None:
         with self.assertRaisesRegex(fetch.StockFetchError, "取得に失敗"):
             fetch.fetch_ohlcv(
