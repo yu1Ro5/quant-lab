@@ -1,6 +1,8 @@
 # quant-lab
 
-GMOコイン外国為替FX Public APIからUSD/JPYを取得し、日次・時間別の履歴保存、変動比較、Slack通知を行います。Public APIのため、GMOコインのAPIキーやSecretは不要です。
+GMOコイン外国為替FX Public APIを使ったUSD/JPY監視と、Parquetを使った単一銘柄バックテストMVPを収録しています。
+
+USD/JPY監視では、日次・時間別の履歴保存、変動比較、Slack通知を行います。Public APIのため、GMOコインのAPIキーやSecretは不要です。
 
 レートは `GET https://forex-api.coin.z.com/public/v1/ticker`、市場ステータスは `GET https://forex-api.coin.z.com/public/v1/status` から取得します。価格計算には `Decimal` を使い、APIの基準時刻はUTC、日本時間の日付を日次履歴の `rate_date` として扱います。
 
@@ -8,7 +10,7 @@ GMOコイン外国為替FX Public APIからUSD/JPYを取得し、日次・時間
 
 - Python 3.12以上
 - [uv](https://docs.astral.sh/uv/)
-- 実行時依存: `requests`、`slack-sdk`
+- 実行時依存: `requests`、`slack-sdk`、`pandas`、`pyarrow`
 
 lock済みの依存関係を同期します。
 
@@ -264,6 +266,74 @@ jobs:
 ```
 
 実際のworkflowでは、checkout/setup Actionを検証済みcommit SHAへ固定し、`concurrency` を設定してください。prepareが失敗した場合や最初のpushが失敗した場合はdeliver stepへ進めない構成にします。
+
+## 日本株バックテストMVP
+
+単一銘柄のOHLCV Parquetを読み込み、サンプル戦略、外部へ注文を送らないダミーBroker、結果集計までを順番に実行します。目的は戦略の利益ではなく、バックテストの一連の流れを再現できることです。
+
+新しい製品コードは `src/quant_lab_backtest/`、新しいテストは `tests/backtest/` に置いています。既存のUSD/JPY監視コードとテストは、従来の実行方法を維持するためリポジトリ直下に残しています。
+
+### 入力データ
+
+Parquetには次のカラムが必要です。余分なカラムがあっても実行できます。
+
+| カラム | 意味 |
+| --- | --- |
+| `Datetime` | ローソク足の日時 |
+| `Open` | 始値 |
+| `High` | 高値 |
+| `Low` | 安値 |
+| `Close` | 終値 |
+| `Volume` | 出来高 |
+
+日時順でないデータは読込時に並べ替えます。欠損、重複日時、0以下の価格、負の出来高、OHLCの矛盾は実行前にエラーになります。
+
+### サンプルを実行する
+
+`examples/data/japanese_stock_sample.parquet` はコミット済みなので、依存関係の同期後すぐに実行できます。これは実在銘柄の履歴ではなく、売買フローを確認するための架空データです。
+
+```bash
+UV_CACHE_DIR=/tmp/quant-lab-uv-cache uv sync --locked
+
+UV_CACHE_DIR=/tmp/quant-lab-uv-cache \
+  uv run python -m quant_lab_backtest \
+  examples/data/japanese_stock_sample.parquet
+```
+
+想定出力は次のとおりです。
+
+```text
+Parquet読込成功: 7件
+総取引回数: 2
+勝率: 50.00%
+総損益: -25.00円
+```
+
+サンプル戦略は、株を持っていないときに「当日の終値が前日の高値を上回る」と翌日に1株買い、株を持っているときに「当日の終値が前日の安値を下回る」と翌日に売ります。
+
+たとえば2026年7月2日の終値1,030円が、7月1日の高値1,020円を上回った場合、7月2日の取引終了後に買うと決め、7月3日の始値1,040円で買ったことにします。終値を確認した後で同じ終値に戻って買う計算にしないためです。
+
+データ最終日の2026年7月9日まで株を持っている場合は、集計を完結させるため、その日の終値1,055円で売ったことにします。この最終売却はバックテスト上の便宜であり、将来の実売買にそのまま適用する仕様ではありません。
+
+### Parquetを再生成する
+
+生成プログラムと、生成済みのサンプル用・テスト用ParquetをすべてGitで管理します。次のコマンドは両方を再生成します。
+
+```bash
+UV_CACHE_DIR=/tmp/quant-lab-uv-cache \
+  uv run python scripts/generate_backtest_parquet.py
+```
+
+生成先は次の2ファイルです。
+
+```text
+examples/data/japanese_stock_sample.parquet
+tests/fixtures/backtest_sample.parquet
+```
+
+任意の場所へ生成する場合は `--sample-output` と `--fixture-output` を指定します。
+
+ダミーBrokerは内部状態を更新するだけで、証券会社へ注文を送りません。複数銘柄、複数時間足、空売り、手数料、税金、グラフ、最適化、外部発注APIはこのMVPの対象外です。
 
 ## テストと検証
 
