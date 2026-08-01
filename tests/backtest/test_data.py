@@ -5,7 +5,7 @@ from tempfile import TemporaryDirectory
 import numpy as np
 import pandas as pd
 
-from quant_lab_backtest.data import DataValidationError, load_parquet, validate_data
+from quant_lab.backtest.data import DataValidationError, load_parquet, validate_data
 
 
 def valid_data() -> pd.DataFrame:

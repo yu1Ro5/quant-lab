@@ -297,7 +297,7 @@ jobs:
 
 単一銘柄のOHLCV Parquetを読み込み、サンプル戦略、外部へ注文を送らないダミーBroker、結果集計までを順番に実行します。目的は戦略の利益ではなく、バックテストの一連の流れを再現できることです。
 
-新しい製品コードは `src/quant_lab_backtest/`、新しいテストは `tests/backtest/` に置いています。既存のUSD/JPY監視コードとテストは、従来の実行方法を維持するためリポジトリ直下に残しています。
+日本株関連の製品コードは `src/quant_lab/`、バックテストのテストは `tests/backtest/`、株価取得のテストは `tests/stock/` に置いています。既存のUSD/JPY監視コードとテストは、従来の実行方法を維持するためリポジトリ直下に残しています。
 
 ### 入力データ
 
@@ -321,7 +321,7 @@ Parquetには次のカラムが必要です。余分なカラムがあっても�
 ```bash
 uv sync --locked
 
-uv run python -m quant_lab_backtest \
+uv run python -m quant_lab.backtest \
   examples/data/japanese_stock_sample.parquet
 ```
 

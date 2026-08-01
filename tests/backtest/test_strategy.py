@@ -2,7 +2,7 @@ import unittest
 
 import pandas as pd
 
-from quant_lab_backtest.strategy import BreakoutStrategy, Signal
+from quant_lab.backtest.strategy import BreakoutStrategy, Signal
 
 
 class BreakoutStrategyTests(unittest.TestCase):

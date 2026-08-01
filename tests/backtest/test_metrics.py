@@ -2,8 +2,8 @@ import unittest
 
 import pandas as pd
 
-from quant_lab_backtest.broker import Trade
-from quant_lab_backtest.metrics import calculate_metrics
+from quant_lab.backtest.broker import Trade
+from quant_lab.backtest.metrics import calculate_metrics
 
 
 def trade(profit_loss: float) -> Trade:
