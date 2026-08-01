@@ -1,1 +1,1 @@
-"""Utilities for quantitative market-data research."""
+"""市場データを使った定量研究のためのユーティリティ。"""

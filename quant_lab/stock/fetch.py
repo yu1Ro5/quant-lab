@@ -1,4 +1,4 @@
-"""Fetch Japanese stock 5-minute OHLCV data and save it as Parquet."""
+"""日本株の5分足OHLCVを取得し、Parquet形式で保存する。"""
 
 from __future__ import annotations
 
@@ -29,11 +29,11 @@ DEFAULT_OUTPUT_DIRECTORY: Final = Path("data/stock")
 
 
 class StockFetchError(Exception):
-    """An error that can be shown directly to a CLI user."""
+    """CLIの利用者へそのまま表示できるエラー。"""
 
 
 def parse_date(value: str, argument_name: str) -> date:
-    """Parse one ISO calendar date with an argument-specific error message."""
+    """ISO形式の日付を解析し、引数名を含むエラーを返す。"""
     try:
         parsed = datetime.strptime(value, "%Y-%m-%d").date()
     except ValueError as error:
@@ -48,14 +48,14 @@ def parse_date(value: str, argument_name: str) -> date:
 
 
 def to_yahoo_symbol(symbol: str) -> str:
-    """Validate a TSE security code and convert it for Yahoo Finance."""
+    """東証銘柄コードを検証し、Yahoo Finance用の形式へ変換する。"""
     if len(symbol) != 4 or not symbol.isascii() or not symbol.isdigit():
         raise StockFetchError("銘柄コードは4桁の数字で指定してください")
     return f"{symbol}.T"
 
 
 def validate_period(from_date: date, to_date: date, *, today: date) -> None:
-    """Validate ordering and yfinance's rolling intraday-data window."""
+    """日付の順序とyfinanceの日中足取得可能期間を検証する。"""
     if from_date > to_date:
         raise StockFetchError("開始日は終了日以前の日付を指定してください")
     if from_date < today - timedelta(days=MAX_LOOKBACK_DAYS):
@@ -70,7 +70,7 @@ def output_path(
     to_date: date,
     output_directory: Path = DEFAULT_OUTPUT_DIRECTORY,
 ) -> Path:
-    """Build the path prescribed by Issue #30."""
+    """Issue #30で定められた保存先パスを組み立てる。"""
     return output_directory / (
         f"{symbol}_{from_date.isoformat()}_{to_date.isoformat()}_{INTERVAL}.parquet"
     )
@@ -83,7 +83,7 @@ def fetch_ohlcv(
     *,
     download: Callable[..., pd.DataFrame] | None = None,
 ) -> pd.DataFrame:
-    """Download an inclusive date range of fixed 5-minute data."""
+    """終了日を含む指定期間の5分足データを取得する。"""
     downloader = download or yf.download
     exclusive_end = to_date + timedelta(days=1)
     try:
@@ -132,7 +132,7 @@ def format_ohlcv(
     from_date: date,
     to_date: date,
 ) -> pd.DataFrame:
-    """Normalize, filter, and validate a yfinance OHLCV frame."""
+    """yfinanceのOHLCVデータを整形し、期間抽出と品質検証を行う。"""
     if raw.empty:
         raise StockFetchError("指定期間の株価データが見つかりませんでした")
 
@@ -179,7 +179,7 @@ def format_ohlcv(
 
 
 def save_parquet(frame: pd.DataFrame, path: Path) -> None:
-    """Create the output directory and write a readable Parquet file."""
+    """保存先ディレクトリを作成し、Parquetファイルを書き出す。"""
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         frame.to_parquet(path, index=False)
@@ -208,7 +208,7 @@ def run(
     download: Callable[..., pd.DataFrame] | None = None,
     output_directory: Path = DEFAULT_OUTPUT_DIRECTORY,
 ) -> Path:
-    """Execute the validated fetch-format-save workflow and return its path."""
+    """取得・整形・保存を順に実行し、保存先パスを返す。"""
     args = _build_argument_parser().parse_args(argv)
     yahoo_symbol = to_yahoo_symbol(args.symbol)
     from_date = parse_date(args.from_value, "--from")
@@ -238,7 +238,7 @@ def run(
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Run the CLI and convert domain failures into concise user messages."""
+    """CLIを実行し、処理エラーを利用者向けメッセージへ変換する。"""
     try:
         run(argv)
     except StockFetchError as error:

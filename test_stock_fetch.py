@@ -1,4 +1,4 @@
-"""Tests for Japanese stock 5-minute OHLCV fetching and persistence."""
+"""日本株5分足OHLCVの取得・保存処理を検証するテスト。"""
 
 import subprocess
 import sys

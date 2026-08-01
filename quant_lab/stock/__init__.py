@@ -1,1 +1,1 @@
-"""Japanese stock market-data utilities."""
+"""日本株の市場データを扱うユーティリティ。"""
