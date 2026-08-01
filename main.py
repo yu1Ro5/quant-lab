@@ -88,7 +88,7 @@ class UsdJpyQuote:
     market_status: str
 
 
-# Keep the name used by PR #18 callers while exposing the quote terminology.
+# PR #18以前の呼び出し元との互換性を保ちながら、Quoteという名称も公開する。
 UsdJpyTicker = UsdJpyQuote
 
 
@@ -365,7 +365,7 @@ def build_notification_message(
     change: RateChange | None,
     alert_threshold_percent: Decimal | None = None,
 ) -> str:
-    """Compatibility formatter for callers that only provide the legacy daily comparison."""
+    """従来の日次比較だけを渡す呼び出し元と互換性のある通知文を作る。"""
     message = (
         f"USD/JPY 仲値: {ticker.rate}\n"
         f"bid: {ticker.bid}\nask: {ticker.ask}\nspread: {ticker.spread}\n"
@@ -797,7 +797,7 @@ def prepare_delivery(
     ticker: UsdJpyQuote | None = None,
     now: datetime | None = None,
 ) -> PrepareResult:
-    # Validate every setting before any external request or persistent update.
+    # 外部APIの呼び出しやデータ更新より前に、すべての設定値を検証する。
     configured_thresholds = thresholds or get_alert_thresholds()
     configured_paths = paths or resolve_data_paths()
     prepared_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
@@ -1109,7 +1109,7 @@ def _release_delivery_claim(
                 pending.pop("delivery_claim")
                 write_alert_state(state_path, state)
     except (OSError, StateFileError, ValueError):
-        # The claim expires, so a failed cleanup cannot block delivery permanently.
+        # claimには有効期限があるため、解除に失敗しても送信が永久に止まることはない。
         return
 
 
