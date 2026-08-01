@@ -15,7 +15,7 @@ USD/JPY監視では、日次・時間別の履歴保存、変動比較、Slack�
 lock済みの依存関係を同期します。
 
 ```bash
-UV_CACHE_DIR=/tmp/quant-lab-uv-cache uv sync --locked
+uv sync --locked
 ```
 
 ## prepare / deliver CLI
@@ -25,14 +25,12 @@ UV_CACHE_DIR=/tmp/quant-lab-uv-cache uv sync --locked
 ```bash
 export QUANT_LAB_DATA_DIR="/absolute/path/to/quant-lab-data/data"
 
-UV_CACHE_DIR=/tmp/quant-lab-uv-cache \
-  uv run python main.py prepare \
+uv run python main.py prepare \
   --envelope /tmp/usdjpy-delivery.json
 
 # この間に日次CSV、時間別CSV、状態JSONをcommit/pushする
 
-UV_CACHE_DIR=/tmp/quant-lab-uv-cache \
-  uv run python main.py deliver \
+uv run python main.py deliver \
   --envelope /tmp/usdjpy-delivery.json
 
 # deliverのJSON出力で state_commit_required=true の場合だけ
@@ -293,10 +291,9 @@ Parquetには次のカラムが必要です。余分なカラムがあっても�
 `examples/data/japanese_stock_sample.parquet` はコミット済みなので、依存関係の同期後すぐに実行できます。これは実在銘柄の履歴ではなく、売買フローを確認するための架空データです。
 
 ```bash
-UV_CACHE_DIR=/tmp/quant-lab-uv-cache uv sync --locked
+uv sync --locked
 
-UV_CACHE_DIR=/tmp/quant-lab-uv-cache \
-  uv run python -m quant_lab_backtest \
+uv run python -m quant_lab_backtest \
   examples/data/japanese_stock_sample.parquet
 ```
 
@@ -320,8 +317,7 @@ Parquet読込成功: 7件
 生成プログラムと、生成済みのサンプル用・テスト用ParquetをすべてGitで管理します。次のコマンドは両方を再生成します。
 
 ```bash
-UV_CACHE_DIR=/tmp/quant-lab-uv-cache \
-  uv run python scripts/generate_backtest_parquet.py
+uv run python scripts/generate_backtest_parquet.py
 ```
 
 生成先は次の2ファイルです。
@@ -340,10 +336,10 @@ tests/fixtures/backtest_sample.parquet
 外部APIとSlackはmockし、標準ライブラリの `unittest` を使います。
 
 ```bash
-UV_CACHE_DIR=/tmp/quant-lab-uv-cache uv run python -m unittest discover -v
-UV_CACHE_DIR=/tmp/quant-lab-uv-cache uv run python -m compileall -q .
-UV_CACHE_DIR=/tmp/quant-lab-uv-cache uv run ruff check .
-UV_CACHE_DIR=/tmp/quant-lab-uv-cache uv run mypy .
+uv run python -m unittest discover -v
+uv run python -m compileall -q .
+uv run ruff check .
+uv run mypy .
 git diff --check
 ```
 
