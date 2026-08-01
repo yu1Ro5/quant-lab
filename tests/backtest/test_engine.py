@@ -66,6 +66,19 @@ class BacktestEngineTests(unittest.TestCase):
             engine.run(frame([("2026-07-01", 100, 102, 99, 101)])), []
         )
 
+    def test_resets_broker_state_for_each_run(self) -> None:
+        data = load_parquet(FIXTURE_PATH)
+        broker = DummyBroker()
+        engine = BacktestEngine(BreakoutStrategy(), broker)
+
+        first_trades = engine.run(data)
+        second_trades = engine.run(data)
+
+        self.assertEqual(len(first_trades), 2)
+        self.assertEqual(len(second_trades), 2)
+        self.assertEqual(second_trades, first_trades)
+        self.assertEqual(broker.trades, tuple(second_trades))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -32,6 +32,10 @@ class Broker(ABC):
         """購入から売却まで完了した取引を返す。"""
 
     @abstractmethod
+    def reset(self) -> None:
+        """保有状態と完了した取引を初期状態へ戻す。"""
+
+    @abstractmethod
     def buy(self, timestamp: pd.Timestamp, price: float) -> None:
         """指定日時と価格で1株を購入する。"""
 
@@ -59,6 +63,11 @@ class DummyBroker(Broker):
     @property
     def trades(self) -> tuple[Trade, ...]:
         return tuple(self._trades)
+
+    def reset(self) -> None:
+        self._entry_time = None
+        self._entry_price = None
+        self._trades.clear()
 
     def buy(self, timestamp: pd.Timestamp, price: float) -> None:
         if self.has_position:

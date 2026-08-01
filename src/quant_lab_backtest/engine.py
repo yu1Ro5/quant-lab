@@ -14,6 +14,7 @@ class BacktestEngine:
         self.broker = broker
 
     def run(self, data: pd.DataFrame) -> list[Trade]:
+        self.broker.reset()
         if data.empty:
             return []
 

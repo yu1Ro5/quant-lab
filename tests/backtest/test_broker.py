@@ -39,6 +39,16 @@ class DummyBrokerTests(unittest.TestCase):
         self.broker.close_position(self.exit_time, 990)
         self.assertEqual(self.broker.trades[0].profit_loss, -10)
 
+    def test_reset_clears_position_and_completed_trades(self) -> None:
+        self.broker.buy(self.entry_time, 1000)
+        self.broker.sell(self.exit_time, 1025)
+        self.broker.buy(self.entry_time, 1010)
+
+        self.broker.reset()
+
+        self.assertFalse(self.broker.has_position)
+        self.assertEqual(self.broker.trades, ())
+
     def test_rejects_invalid_price(self) -> None:
         for price in (0, -1, float("nan"), float("inf")):
             with self.subTest(price=price), self.assertRaisesRegex(ValueError, "売買価格"):
