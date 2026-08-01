@@ -10,13 +10,40 @@ USD/JPY監視では、日次・時間別の履歴保存、変動比較、Slack�
 
 - Python 3.12以上
 - [uv](https://docs.astral.sh/uv/)
-- 実行時依存: `requests`、`slack-sdk`、`pandas`、`pyarrow`
+- 実行時依存: `requests`、`slack-sdk`、`yfinance`、`numpy`、`pandas`、`pyarrow`
 
 lock済みの依存関係を同期します。
 
 ```bash
 uv sync --locked
 ```
+
+## 日本株5分足OHLCV
+
+4桁の東証銘柄コードと期間を指定し、yfinanceから5分足OHLCVを取得してParquetへ保存します。`--to`で指定した日も取得対象に含まれます。
+
+```bash
+uv run python -m quant_lab.stock.fetch \
+  --symbol 9434 \
+  --from 2026-07-28 \
+  --to 2026-07-29
+```
+
+| 引数 | 内容 |
+| --- | --- |
+| `--symbol` | 4桁の東証銘柄コード。内部で`.T`を付けて取得 |
+| `--from` | 取得開始日（`YYYY-MM-DD`） |
+| `--to` | 取得終了日（`YYYY-MM-DD`、当日を含む） |
+
+yfinanceの5分足は直近60日以内に制限されます。出力先は`data/stock/{symbol}_{from}_{to}_5m.parquet`で、`datetime`、`open`、`high`、`low`、`close`、`volume`の6列を日本時間の昇順で保存します。
+
+保存した件数と先頭行は次のように確認できます。
+
+```bash
+uv run python -c "import pandas as pd; p='data/stock/9434_2026-07-28_2026-07-29_5m.parquet'; df=pd.read_parquet(p); print(f'{len(df):,}件'); print(df.head())"
+```
+
+yfinanceはYahoo Financeの公式ライブラリではありません。本機能は個人の研究・バックテスト用途を想定しています。データの利用条件と正確性は利用者自身で確認してください。
 
 ## prepare / deliver CLI
 
@@ -269,7 +296,7 @@ jobs:
 
 単一銘柄のOHLCV Parquetを読み込み、サンプル戦略、外部へ注文を送らないダミーBroker、結果集計までを順番に実行します。目的は戦略の利益ではなく、バックテストの一連の流れを再現できることです。
 
-新しい製品コードは `src/quant_lab_backtest/`、新しいテストは `tests/backtest/` に置いています。既存のUSD/JPY監視コードとテストは、従来の実行方法を維持するためリポジトリ直下に残しています。
+日本株関連の製品コードは `src/quant_lab/`、バックテストのテストは `tests/backtest/`、株価取得のテストは `tests/stock/` に置いています。既存のUSD/JPY監視コードとテストは、従来の実行方法を維持するためリポジトリ直下に残しています。
 
 ### 入力データ
 
@@ -293,7 +320,7 @@ Parquetには次のカラムが必要です。余分なカラムがあっても�
 ```bash
 uv sync --locked
 
-uv run python -m quant_lab_backtest \
+uv run python -m quant_lab.backtest \
   examples/data/japanese_stock_sample.parquet
 ```
 

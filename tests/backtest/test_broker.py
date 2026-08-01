@@ -2,7 +2,7 @@ import unittest
 
 import pandas as pd
 
-from quant_lab_backtest.broker import DummyBroker
+from quant_lab.backtest.broker import DummyBroker
 
 
 class DummyBrokerTests(unittest.TestCase):

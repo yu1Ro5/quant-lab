@@ -77,7 +77,11 @@ class DummyBroker(Broker):
         self._entry_price = float(price)
 
     def sell(self, timestamp: pd.Timestamp, price: float) -> None:
-        if not self.has_position or self._entry_price is None or self._entry_time is None:
+        if (
+            not self.has_position
+            or self._entry_price is None
+            or self._entry_time is None
+        ):
             raise RuntimeError("保有している株がないため売却できません")
         self._validate_price(price)
         exit_price = float(price)

@@ -3,10 +3,10 @@ from pathlib import Path
 
 import pandas as pd
 
-from quant_lab_backtest.broker import DummyBroker
-from quant_lab_backtest.data import load_parquet
-from quant_lab_backtest.engine import BacktestEngine
-from quant_lab_backtest.strategy import BreakoutStrategy
+from quant_lab.backtest.broker import DummyBroker
+from quant_lab.backtest.data import load_parquet
+from quant_lab.backtest.engine import BacktestEngine
+from quant_lab.backtest.strategy import BreakoutStrategy
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 FIXTURE_PATH = PROJECT_ROOT / "tests/fixtures/backtest_sample.parquet"

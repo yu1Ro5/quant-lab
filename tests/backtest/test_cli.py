@@ -3,7 +3,7 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
-from quant_lab_backtest.cli import main
+from quant_lab.backtest.cli import main
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SAMPLE_PATH = PROJECT_ROOT / "examples/data/japanese_stock_sample.parquet"
