@@ -58,7 +58,8 @@ def validate_period(from_date: date, to_date: date, *, today: date) -> None:
     """日付の順序とyfinanceの日中足取得可能期間を検証する。"""
     if from_date > to_date:
         raise StockFetchError("開始日は終了日以前の日付を指定してください")
-    if from_date < today - timedelta(days=MAX_LOOKBACK_DAYS):
+    earliest_date = today - timedelta(days=MAX_LOOKBACK_DAYS - 1)
+    if from_date < earliest_date:
         raise StockFetchError("5分足は直近60日以内のデータのみ取得できます")
     if to_date > today:
         raise StockFetchError("終了日は今日以前の日付を指定してください")

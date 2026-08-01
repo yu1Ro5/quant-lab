@@ -68,9 +68,9 @@ class StockFetchValidationTests(unittest.TestCase):
 
     def test_sixty_day_limit_uses_injected_date_and_has_fixed_boundary(self) -> None:
         today = date(2026, 8, 1)
-        fetch.validate_period(date(2026, 6, 2), today, today=today)
+        fetch.validate_period(date(2026, 6, 3), today, today=today)
         with self.assertRaisesRegex(fetch.StockFetchError, "直近60日"):
-            fetch.validate_period(date(2026, 6, 1), today, today=today)
+            fetch.validate_period(date(2026, 6, 2), today, today=today)
         with self.assertRaisesRegex(fetch.StockFetchError, "今日以前"):
             fetch.validate_period(today, date(2026, 8, 2), today=today)
 
