@@ -1,4 +1,4 @@
-"""Fetch and persist USD/JPY daily KLine data from GMO Coin."""
+"""GMOコインからUSD/JPYの日足KLineを取得して保存する。"""
 
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ PriceType = Literal["BID", "ASK"]
 
 @dataclass(frozen=True)
 class Ohlc:
-    """OHLC prices for one side of a daily KLine."""
+    """日足KLineのBIDまたはASK片側の四本値。"""
 
     open: Decimal
     high: Decimal
@@ -45,21 +45,21 @@ class Ohlc:
 
 @dataclass(frozen=True)
 class DailyKline:
-    """A USD/JPY daily KLine containing matching BID and ASK prices."""
+    """同じ開始日時のBIDとASKをまとめたUSD/JPYの日足KLine。"""
 
     open_time: datetime
     bid: Ohlc
     ask: Ohlc
 
     def __post_init__(self) -> None:
-        """Require an unambiguous timezone-aware opening time."""
+        """開始日時にタイムゾーンが明示されていることを確認する。"""
         if self.open_time.tzinfo is None or self.open_time.utcoffset() is None:
             raise ValueError("DailyKline open_time must include a timezone")
 
 
 @dataclass(frozen=True)
 class SaveResult:
-    """Counts produced while merging fetched KLines into the history CSV."""
+    """取得したKLineを履歴CSVへ統合した件数。"""
 
     fetched: int
     added: int
@@ -67,7 +67,7 @@ class SaveResult:
 
 
 def _parse_open_time(value: object) -> datetime:
-    """Parse an API Unix timestamp in milliseconds as a UTC datetime."""
+    """APIのミリ秒単位Unix時刻をUTCの日時へ変換する。"""
     if not isinstance(value, str):
         raise ValueError(f"KLine has an invalid openTime: {value!r}")
     try:
@@ -85,7 +85,7 @@ def _parse_open_time(value: object) -> datetime:
 
 
 def _parse_price(item: dict[str, object], field: str) -> Decimal:
-    """Parse a finite positive price from an API KLine item."""
+    """APIのKLine要素から0より大きい有限の価格を読み取る。"""
     value = item.get(field)
     try:
         if value is None or isinstance(value, bool):
@@ -99,7 +99,7 @@ def _parse_price(item: dict[str, object], field: str) -> Decimal:
 
 
 def _parse_ohlc(item: dict[str, object]) -> Ohlc:
-    """Convert an API KLine item into validated OHLC prices."""
+    """APIのKLine要素を検証済みの四本値へ変換する。"""
     ohlc = Ohlc(**{field: _parse_price(item, field) for field in PRICE_FIELDS})
     if (
         ohlc.low > ohlc.high
@@ -111,11 +111,10 @@ def _parse_ohlc(item: dict[str, object]) -> Ohlc:
 
 
 def fetch_price_klines(year: int, price_type: PriceType) -> dict[datetime, Ohlc]:
-    """Fetch one year of BID or ASK USD/JPY daily KLines.
+    """指定年のUSD/JPY日足KLineをBIDまたはASKについて取得する。
 
-    GMO Coin accepts a four-digit year for the ``date`` parameter when
-    ``interval=1day``. The request follows the existing project policy of one
-    timeout-bounded attempt without automatic retries.
+    GMOコインでは ``interval=1day`` の場合、``date`` に4桁の年を指定する。
+    既存方針に従い、自動再試行は行わず、タイムアウト付きで1回だけ取得する。
     """
     if year < 1000 or year > 9999:
         raise ValueError(f"year must be a four-digit value: {year!r}")
@@ -169,7 +168,7 @@ def fetch_price_klines(year: int, price_type: PriceType) -> dict[datetime, Ohlc]
 
 
 def fetch_daily_klines(year: int) -> list[DailyKline]:
-    """Fetch and join BID and ASK USD/JPY daily KLines for one year."""
+    """指定年のUSD/JPY日足KLineを取得し、BIDとASKを結合する。"""
     bids = fetch_price_klines(year, "BID")
     asks = fetch_price_klines(year, "ASK")
     if bids.keys() != asks.keys():
@@ -186,7 +185,7 @@ def fetch_daily_klines(year: int) -> list[DailyKline]:
 
 
 def fetch_daily_klines_for_years(from_year: int, to_year: int) -> list[DailyKline]:
-    """Fetch USD/JPY daily KLines for an inclusive ascending year range."""
+    """開始年から終了年までのUSD/JPY日足KLineを年の昇順で取得する。"""
     if from_year > to_year:
         raise ValueError("from_year must be less than or equal to to_year")
     return [
@@ -268,7 +267,7 @@ def save_daily_klines(
     klines: list[DailyKline],
     csv_path: str | Path = DEFAULT_KLINE_HISTORY_PATH,
 ) -> SaveResult:
-    """Merge KLines into the CSV by ``open_time`` and write them in UTC order."""
+    """KLineを ``open_time`` ごとにCSVへ統合し、UTCの日時順で保存する。"""
     path = Path(csv_path)
     history = _read_history(path)
     incoming: dict[datetime, DailyKline] = {}
@@ -311,7 +310,7 @@ def _parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
-    """Run the daily KLine command-line interface."""
+    """日足KLine取得用のコマンドライン処理を実行する。"""
     args = _parse_args()
     klines = fetch_daily_klines_for_years(args.from_year, args.to_year)
     result = save_daily_klines(klines, args.output)

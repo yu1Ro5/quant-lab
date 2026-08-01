@@ -1,4 +1,4 @@
-"""Tests for USD/JPY daily KLine fetching and persistence."""
+"""USD/JPY日足KLineの取得と保存に関するテスト。"""
 
 import csv
 import unittest
