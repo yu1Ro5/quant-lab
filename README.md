@@ -23,8 +23,7 @@ uv sync --locked
 4桁の東証銘柄コードと期間を指定し、yfinanceから5分足OHLCVを取得してParquetへ保存します。`--to`で指定した日も取得対象に含まれます。
 
 ```bash
-UV_CACHE_DIR=/tmp/quant-lab-uv-cache \
-  uv run python -m quant_lab.stock.fetch \
+uv run python -m quant_lab.stock.fetch \
   --symbol 9434 \
   --from 2026-07-28 \
   --to 2026-07-29
