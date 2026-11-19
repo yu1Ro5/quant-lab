@@ -47,6 +47,60 @@ GitHub Actionsの`CI`はmainへのpush・PR・手動実行でruff、mypy、全�
 株式取得・米国株・バックテストも検証する汎用CIで、テストが1件でもスキップされた場合は失敗します。
 `USDJPY Hourly Monitor`は別workflowの手動実行専用監視処理で、CIではありません。
 
+## moomooによる米国株データ取得の利用方針
+
+米国株データの取得・開発支援には、用途に応じて次を使い分けます。これは運用方針であり、既存のデータ取得処理やバックテストをMCPへ置き換えるものではありません。
+
+| 用途 | 使用するもの | 役割 |
+| --- | --- | --- |
+| 大量の履歴データ取得 | Python SDK + OpenD | 取得枠・頻度制限・ページングを管理し、再現可能な入力データを用意する |
+| API調査・コード生成 | 公式 `moomooapi` Skill | API仕様・引数・サンプルを参照し、SDKを使うコードの開発を支援する |
+| 少量の相場情報の直接照会 | 公式MCP | AIエージェントからローソク足などを読み取り専用で照会する |
+| 5分足バックテスト・ORB開発 | SDKで取得したOHLCV + バックテストコード | 時刻・取引セッション・価格調整条件を揃えたデータで検証する。Skillsは実装支援に使う |
+
+### MacとCodex Cloudの利用範囲
+
+Macでは、ログイン済みの既存OpenD（`127.0.0.1:11111`）とPython SDKを使用します。SkillsはAPI資料と実行スクリプトを提供し、相場取得スクリプトはSDK経由でOpenDへ接続します。一方、MCPはOAuthで認証するリモートAPIであり、MacのOpenDを経由しません。
+
+Macのユーザー設定はリポジトリに含めません。
+
+- 公式Skills：`~/.agents/skills/moomooapi/`、`~/.agents/skills/install-moomoo-opend/`
+- MCP設定：`~/.codex/config.toml` の `[mcp_servers.moomoo]`
+- MCPエンドポイント：`https://mcp.moomoo.com/mcp`
+
+Codex CloudにはMacのSkills・MCP設定・認証状態は引き継がれません。Cloudの `127.0.0.1` はCloud自身を指すため、MacのOpenDには接続できません。Cloudでは人工データやモックを用いて、取得後の処理とバックテストを開発・検証します。MCPをCloudから使用する構成は、別途設定・認証・接続確認が必要であり、現時点では未検証です。
+
+### 読み取り専用での利用
+
+MCPのOAuthスコープは `quote:read` のみに限定し、`quote:write`、`trade:read`、`trade:write` は許可しません。Codex側でも、確認済みの読み取り専用相場ツールだけを `enabled_tools` で許可します。ツール一覧に注文用ツールが表示されることと、その操作権限があることは別です。
+
+公式Skillsには注文用コードとOpenDのインストール手順も含まれます。MCPのスコープ制限はSDKには適用されないため、Skillsでは相場取得だけを指定し、本番・模擬のいずれも注文の送信・訂正・取消や取引のアンロックを行いません。既存OpenD・SDKの再インストールや初期化も行いません。
+
+APIキー、OAuthトークン、パスワード、実取得データはGitへコミットしません。取得データを比較するときは、銘柄・日付・時間帯・価格調整条件・出来高の単位を揃え、取得できなかった項目は未検証として扱います。
+
+Codexでの依頼例：
+
+```text
+$moomooapi 既存OpenD 127.0.0.1:11111を使って、
+US.AAPLの2026-11-18の5分足OHLCVを、通常取引時間・無調整で3本取得してください。
+再インストールや注文操作は行わないでください。
+```
+
+```text
+moomoo MCPのquote_history_klineで、US.AAPLの2026-11-18の日足を
+無調整で1本取得してください。相場参照ツールだけを使用してください。
+```
+
+2026-11-19のMacローカル検証では、Codexによる公式Skillsの認識、既存OpenD経由のAAPLの5分足取得、日本のmoomoo IDによる `quote:read` のみのOAuth認証、MCP経由の日足取得を確認しました。同じ日付・無調整の日足OHLCVは両経路で一致しましたが、売買代金 `turnover` は異なり、差の原因は未検証です。
+
+公式資料：
+
+- [moomoo OpenD Skills](https://openapi.moomoo.com/moomoo-api-doc/jp/intro/ai.html)
+- [moomoo MCP概要](https://open.moomoo.com/mcp-docs/overview)
+- [moomoo MCP認証・スコープ](https://open.moomoo.com/mcp-docs/authentication)
+- [Codex Skills](https://developers.openai.com/codex/skills/)
+- [Codex MCP設定](https://developers.openai.com/codex/mcp/)
+
 ## 日本株5分足OHLCV
 
 4桁の東証銘柄コードと期間を指定し、yfinanceから5分足OHLCVを取得してParquetへ保存します。`--to`で指定した日も取得対象に含まれます。
