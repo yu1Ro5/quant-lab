@@ -28,14 +28,31 @@ jobs:
       - name: Set up Python
         run: uv python install 3.12
 
+      - name: Set up Node for chart controller tests
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+
       - name: Install dependencies
         run: uv sync --locked
 
+      - name: Verify stock library imports
+        run: uv run --locked python -c "import moomoo; import plotly; import kaleido"
+
       - name: Run ruff
-        run: uv run ruff check .
+        run: uv run --locked ruff check .
 
       - name: Run mypy
-        run: uv run mypy .
+        run: uv run --locked mypy .
 
-      - name: Run unittest
-        run: uv run python -m unittest discover -v
+      - name: Run unittest without skips
+        run: |
+          uv run --locked python - <<'PY'
+          import sys
+          import unittest
+
+          suite = unittest.defaultTestLoader.discover('.')
+          result = unittest.TextTestRunner(verbosity=2).run(suite)
+          sys.exit(0 if result.wasSuccessful() and not result.skipped else 1)
+          PY

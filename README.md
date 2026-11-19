@@ -1,22 +1,51 @@
 # quant-lab
 
+moomoo OpenAPIの初回検証記録と再開手順は
+[moomoo OpenAPI 動作確認](docs/moomoo-openapi-verification.md)を参照してください。
+初回は環境制約で中断しましたが、その後MacでOpenD接続とデータ取得に成功しています。
+
 GMOコイン外国為替FX Public APIを使ったUSD/JPY監視と、Parquetを使った単一銘柄バックテストMVPを収録しています。
 
 USD/JPY監視では、日次・時間別の履歴保存、変動比較、Slack通知を行います。Public APIのため、GMOコインのAPIキーやSecretは不要です。
 
 レートは `GET https://forex-api.coin.z.com/public/v1/ticker`、市場ステータスは `GET https://forex-api.coin.z.com/public/v1/status` から取得します。価格計算には `Decimal` を使い、APIの基準時刻はUTC、日本時間の日付を日次履歴の `rate_date` として扱います。
 
+## moomoo AAPL日足
+
+OpenDに接続してAAPL日足をCSV・Parquetに保存し、保存データからローソク足・出来高・
+終値推移のHTML/PNGを生成するCLIを追加しました。
+[実行方法と検証状況](docs/moomoo-daily.md)を参照してください。
+Macで日足221件の取得とHTML/PNG生成を確認済みです。
+遡及検証では2010年1月4日まで取得できました（全履歴の最古は未確定）。
+
+## moomoo 米国株5分足
+
+AAPLの2026年初から確定済み営業日までの5分足を取得・検証し、CSV/Parquet、
+日足比較表、ローソク足・出来高のHTMLを保存できます。
+MacのOpenDで17,316本を取得し、構造上の欠落・重複なしを確認しました。
+出来高の日足との差と足の正式な時刻定義は要確認です。
+HTMLは最大5営業日の詳細を切り替える軽量表示と、全期間の日足集計概要に分けています。
+[実行方法・品質検証・遡及結果・利用条件](docs/moomoo-intraday.md)を参照してください。
+
 ## 必要環境とセットアップ
 
 - Python 3.12以上
 - [uv](https://docs.astral.sh/uv/)
-- 実行時依存: `requests`、`slack-sdk`、`yfinance`、`numpy`、`pandas`、`pyarrow`
+- 実行時依存: `requests`、`slack-sdk`、`yfinance`、`numpy`、`pandas`、`pyarrow`、`moomoo-api`、`plotly`、`kaleido`
 
 lock済みの依存関係を同期します。
 
 ```bash
 uv sync --locked
 ```
+
+依存宣言は`pyproject.toml`に集約し、解決済みバージョンは`uv.lock`で固定します。
+moomoo用の別requirementsファイルや`--with`指定は不要です。
+グラフの期間切替を含む開発テストにはNode.jsが必要です（CIはNode.js 24）。
+
+GitHub Actionsの`CI`はmainへのpush・PR・手動実行でruff、mypy、全単体テストを実行します。
+株式取得・米国株・バックテストも検証する汎用CIで、テストが1件でもスキップされた場合は失敗します。
+`USDJPY Hourly Monitor`は別workflowの手動実行専用監視処理で、CIではありません。
 
 ## 日本株5分足OHLCV
 
