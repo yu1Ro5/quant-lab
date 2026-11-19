@@ -1,0 +1,36 @@
+experiment:
+  name: aapl_orb_30m
+data:
+  symbol: US.AAPL
+  path: data/stock/aapl_5m_2026.parquet
+  timeframe: 5m
+  timezone: America/New_York
+  # moomoo取得データの終了ラベル仮説。提供元の正式確認は未完了。
+  bar_timestamp: end
+  adjustment: none
+period:
+  start: "2026-01-01"
+  end: "2026-11-18"
+entry:
+  strategy: orb
+  params:
+    opening_range_minutes: 30
+exit:
+  strategy: fixed_stop
+  params:
+    stop_loss_pct: 0.5
+    take_profit_pct: 1.0
+    close_at_market_end: true
+sizing:
+  strategy: fixed_shares
+  params:
+    shares: 1
+execution:
+  commission_usd_per_side: 0.10
+  slippage_bps_per_side: 2
+  spread_bps_per_side: 0
+portfolio:
+  initial_capital_usd: 5000
+  max_trades_per_day: 1
+output:
+  directory: results

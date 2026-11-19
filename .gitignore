@@ -219,3 +219,6 @@ __marimo__/
 
 # Generated Japanese stock market data
 data/stock/
+
+# Local backtest experiment artifacts
+results/
