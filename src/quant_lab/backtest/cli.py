@@ -5,9 +5,11 @@ import sys
 from collections.abc import Sequence
 
 from .broker import DummyBroker
+from .config import ConfigError, load_config
 from .data import DataValidationError, load_parquet
 from .engine import BacktestEngine
 from .metrics import calculate_metrics
+from .runner import run_experiment
 from .strategy import BreakoutStrategy
 
 
@@ -15,12 +17,25 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="単一銘柄のOHLCV Parquetを使ってバックテストを実行します"
     )
-    parser.add_argument("parquet_path", help="入力するParquetファイルのパス")
+    parser.add_argument("parquet_path", nargs="?", help="入力するParquetファイルのパス")
+    parser.add_argument("--config", help="YAML実験設定のパス")
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if bool(args.config) == bool(args.parquet_path):
+        parser.error("Parquetパスまたは--configの一方だけを指定してください")
+    if args.config:
+        try:
+            directory = run_experiment(load_config(args.config))
+        except (ConfigError, DataValidationError, OSError, ValueError) as error:
+            print(f"エラー: {error}", file=sys.stderr)
+            return 1
+        print(f"実験結果: {directory}")
+        print(f"実験結果HTML：{directory / 'equity_curve.html'}")
+        return 0
     try:
         data = load_parquet(args.parquet_path)
     except DataValidationError as error:
