@@ -31,7 +31,7 @@ HTMLは最大5営業日の詳細を切り替える軽量表示と、全期間の
 
 - Python 3.12以上
 - [uv](https://docs.astral.sh/uv/)
-- 実行時依存: `requests`、`slack-sdk`、`yfinance`、`numpy`、`pandas`、`pyarrow`、`moomoo-api`、`plotly`、`kaleido`
+- 実行時依存: `requests`、`slack-sdk`、`yfinance`、`numpy`、`pandas`、`pyarrow`、`moomoo-api`、`plotly`、`kaleido`、`PyYAML`、`exchange-calendars`
 
 lock済みの依存関係を同期します。
 
@@ -440,6 +440,223 @@ tests/fixtures/backtest_sample.parquet
 任意の場所へ生成する場合は `--sample-output` と `--fixture-output` を指定します。
 
 ダミーBrokerは内部状態を更新するだけで、証券会社へ注文を送りません。複数銘柄、複数時間足、空売り、手数料、税金、グラフ、最適化、外部発注APIはこのMVPの対象外です。
+
+## YAML駆動の米国株バックテスト
+
+Entry・Exit・Sizingを独立に指定して、保存済み5分足Parquetから実験を再実行できます。
+初期戦略は30分ORB、固定率の損切り/利確、固定1株です。外部API・OpenDへの接続はなく、
+すべてメモリ内の仮想取引です。旧日本株MVPの位置引数CLIと公開クラスも維持しています。
+
+```bash
+uv sync --locked
+uv run python -m quant_lab.backtest --config configs/experiments/aapl_orb_30m.yaml
+
+# 既存MVP
+uv run python -m quant_lab.backtest examples/data/japanese_stock_sample.parquet
+```
+
+入力の既定パスは`data/stock/aapl_5m_2026.parquet`。
+別worktreeや別ディレクトリに保存している場合は、YAMLの`data.path`をその絶対パスに変更してください。
+**入力/出力の相対パスは実行時のカレントディレクトリ基準**です。
+個人用設定や実データ入り結果はGitへ追加しないでください。例えば`results/local.yaml`へ
+設定をコピーすれば、設定も既定のGit除外ディレクトリに置けます。
+
+### 設定例と検証
+
+完全なサンプルは[configs/experiments/aapl_orb_30m.yaml](configs/experiments/aapl_orb_30m.yaml)。
+
+```yaml
+experiment:
+  name: aapl_orb_30m
+data:
+  symbol: US.AAPL
+  path: data/stock/aapl_5m_2026.parquet
+  timeframe: 5m
+  timezone: America/New_York
+  bar_timestamp: end
+  adjustment: none
+period:
+  start: "2026-01-01"
+  end: "2026-11-18"
+entry:
+  strategy: orb
+  params:
+    opening_range_minutes: 30
+exit:
+  strategy: fixed_stop
+  params:
+    stop_loss_pct: 0.5
+    take_profit_pct: 1.0
+    close_at_market_end: true
+sizing:
+  strategy: fixed_shares
+  params:
+    shares: 1
+execution:
+  commission_usd_per_side: 0.10
+  slippage_bps_per_side: 2
+  spread_bps_per_side: 0
+portfolio:
+  initial_capital_usd: 5000
+  max_trades_per_day: 1
+output:
+  directory: results
+```
+
+必須セクション/キー、未知キー、YAML重複キー、未知strategy、未知パラメータ、型違い、
+NaN/Infinity、負のコスト、期間逆転を説明付きエラー（終了コード1）にします。
+日付は引用符付き`YYYY-MM-DD`文字列、timezoneはIANA名、足種は`5m`のみです。
+株数と1日最大取引数は1〜1,000,000の整数（boolや小数は禁止）、初期資金は正の有限値。
+ORB期間は5〜180分の5分単位、損切率は0より大きく100%未満、利確率は正の有限値。
+片道bpsの合計は10,000未満、`close_at_market_end`は当日決済を守るため`true`のみです。
+実験名は英数字・`_`・`-`の1〜100文字。`output`省略時は`results`。
+各組込戦略の`params: {}`は実装の既定値を使い、結果設定には適用した既定値も保存します。
+
+### 責務分離と戦略の追加
+
+| 担当 | ファイル | 契約 |
+| --- | --- | --- |
+| Entry | `strategies/entry/base.py`, `strategies/entry/orb.py` | `on_close(history, session)`：確定済み履歴→買いシグナル |
+| Exit | `strategies/exit/base.py`, `strategies/exit/fixed_stop.py` | `on_bar(bar, position)`：保護注文のOHLC評価→決済価格/理由/時刻 |
+| Sizing | `strategies/sizing/base.py`, `strategies/sizing/fixed_shares.py` | `size(cash, price, signal)`：株数。0は見送り |
+| 仮想Execution/Broker | `execution.py` | 実約定価格、現金、余力、コスト |
+| Engine | `intraday_engine.py` | 次足注文、ポジション、部品の連携、日末の決済保証 |
+| 入力・立会 | `sessions.py` | timezone/足ラベル正規化、XNYS立会、欠損日の除外 |
+| Config / Runner | `config.py`, `registry.py`, `runner.py` | YAML検証、安全な戦略解決、実験実行、識別情報 |
+| Metrics | `metrics.py` | 成績集計 |
+| Report | `report.py` | CSV/JSON/HTML出力 |
+
+新戦略ファイルを`strategies/entry/`・`strategies/exit/`・`strategies/sizing/`の
+対応するフォルダへ追加し、そのフォルダの`base.py`にあるProtocolを実装してください。
+例えば新Entryを追加したら`registry.py`へ明示的にimportし、
+`ENTRY.register("new_entry", NewEntry)`を1行追加します。
+あとはYAMLの`entry.strategy`と`params`を変更するだけで、Engine/Runnerは無改修です。
+Exit/Sizingもそれぞれ`EXIT`/`SIZING`へ登録できます。
+任意モジュール名のYAML指定、`eval`、自動探索importは行いません。
+戦略コンストラクタがパラメータの型/範囲を検証します（組込戦略は`validation.py`を共有）。
+Python APIでは`ExperimentEngine(config, entry=..., exit=..., sizing=...)`で個別注入できます。
+テスト用の戦略で個別注入とYAML registry経由の両方を自動検証しています。
+
+Entryには当日現在までの確定足と立会予定時刻だけを渡し、`session.bars`は空にします。
+Sizingには次足の始値に基づく約定予定価格を渡します。
+Exitは、足開始時点で既知の建値から設定した保護注文を評価する契約です。
+差し替えExitでも、終値を見てその足の過去の安値で売るなどの先読みは禁止です。
+状態を持つ戦略は実験ごとに新規インスタンスを使い、日付リセットも実装してください。
+Engineは具体的な戦略名やORBの数値には依存しません。
+
+### 入力時刻・立会・欠損の扱い
+
+必須列は`datetime, open, high, low, close, volume`。追加列は使用しません。
+価格はUSD、出来高は元の単位を保持し、整数化しません。timezone付き時刻はその絶対時刻を
+UTCへ変換し、naiveな時刻は**YAMLのtimezone**でlocalizeします。
+DSTの曖昧/存在しない時刻、重複、非有限値、欠損、非正価格、OHLC矛盾を拒否します。
+開始/終了ラベルは`bar_timestamp: start/end`で明示し、各5分区間の開始/終了へ正規化します。
+
+市場日は`exchange_calendars`の`XNYS`を使用します。
+[ライブラリのカレンダーAPI](https://github.com/gerrymanoim/exchange_calendars/blob/master/exchange_calendars/calendar_utils.py)
+から取得する立会時刻で、米国東部09:30〜16:00、DST、休日、短縮13:00などを扱います。
+実行にネット接続は不要です。将来の臨時休場・時間変更はライブラリ更新が必要になる場合があります。
+期間の開始日・終了日は東部時間の日付で両端を含みます。
+
+期間内の全営業日を列挙し、通常立会の足だけを使います。時間外・休日の足は警告付きで除外します。
+通常日は78本、13時終了日は42本。寄り付き6本、日中の足、最終足のいずれかに欠損がある、
+または5分グリッド外の足がある場合は**その日全体を取引対象外**とし、除外日/理由を記録します。
+完全にデータがない営業日も除外日です。補間や「最後に見えた価格で決済」はしません。
+この事前品質フィルタは後から分かる欠損も用いるため、稼働中の売買停止への対応は再現しません。
+比較時には除外日の違いを確認してください。
+
+moomoo取得データの`datetime`はUTCで、観測上の09:35〜16:00から終了ラベルと推定されています。
+`interval_start_utc`はその仮説による派生値で、今回の入力では使いません。
+`adjustment: none/forward/backward`は入力データの申告条件で、バックテスト側では再調整しません。
+隣接する`<stem>_metadata.json`があればハッシュ・銘柄・足種・判明している条件を照合し、
+不一致なら拒否します。正式な時刻定義未確認や`backtest_ready=false`は結果の警告にも残します。
+メタデータがなくても実行できますが、設定値からデータの調整条件を推測/保証はできません。
+提供元の時刻意味と日足の出来高差分は未解決です。構造検証成功を品質保証とは扱いません。
+
+### 約定モデルと損益
+
+30分ORBでは09:30〜10:00の確定済み6本からHigh/Lowを計算します。
+10:00以降に**開始する**足の確定終値がHighを厳密に超えたらシグナルとし、次足始値で買います。
+例えば終了ラベル10:05の足を確認したら、10:05開始（10:10終了）の足の始値で買います。
+このためCSVの`signal_time`と`entry_time`は境界で同じ時刻になり得ますが、参照する足は別です。
+立会最終足への新規購入は禁止です。上限1回なら、その日の約定済み購入は1回だけです。
+余力不足の購入は拒否し、次のシグナルで余力が足りれば購入できる場合があります。
+
+ストップ/ターゲットは**買いの実約定価格**を基準とし、エントリーした足内でも判定します。
+始値がストップ以下ならその始値、足内でストップに達したらストップ水準で決済します。
+同じ足で利確・損切りが両方成立したら、始値がターゲット以上の場合も含め、保守的に損切り優先。
+ストップに達していない足では、始値がターゲット以上ならその始値、足内到達ならターゲット水準です。
+残った建玉は通常立会最終足の終値で決済し、翌営業日へ持ち越しません。
+始値での決済時刻は足開始、足内到達の時刻は正確に分からないため足終了で記録します。
+
+買値=`基準価格 × (1 + (slippage_bps + spread_bps)/10000)`、
+売値=`基準価格 × (1 - (slippage_bps + spread_bps)/10000)`。
+commissionは約定ごとの固定USD（株数によらず片道1回）です。
+slippageとspreadは共に基準価格に対する独立した片道概算で、乗算しません。
+入力が既に売買気配の差を含む場合はspreadを0にするなど、同じ摩擦の二重計上を避けてください。
+初期の手数料/2bpsは比較実験用の仮定で、証券会社の実料金を表しません。
+
+`gross_pnl`は売買基準価格差×株数、`slippage`/`spread`は両側基準代金合計×各bps、
+`commission`は両側の固定手数料、`net_pnl = gross_pnl - total_cost`です。
+現金から買付実代金と片道手数料を先に控除し、余力を超える購入は行いません。
+決済時に売却実代金から片道手数料を引いて戻します。借入・空売りはありません。
+価格計算はfloatで行うため、残高と集計損益に浮動小数の丸め誤差が生じる場合があります。
+
+OHLCVでは到達順序・板・実際のスプレッド・流動性・部分約定・取引停止を復元できません。
+固定bpsは板による価格形成を再現せず、利確にも不利な調整を適用する簡易モデルです。
+最大ドローダウンは下記の確定足終値系列によるもので、足内の最大逆行は含みません。
+複数銘柄・税金・為替換算・最適化・実発注は対象外です。
+
+### 結果と再現性
+
+毎回`results/<実験名>_<UTC時刻マイクロ秒>_<ランダムID>/`を排他的に作成し、過去runを上書きしません。
+出力途中の失敗時は`FAILED`を残し、成功した結果と区別します。
+
+| 成果物 | 内容 |
+| --- | --- |
+| `config.yaml` | 実行時確定設定。入力/出力は絶対パス、組込戦略の既定値も展開 |
+| `trades.csv` | 全取引、東部取引日、symbol、ORB High/Low、シグナル/約定時刻、株数、基準/実約定価格、決済理由、コスト前/後USD損益と内訳。ゼロ取引でもヘッダーを保存 |
+| `metrics.json` | 取引回数、勝率、グロス/コスト/ネット、平均ネット、Profit Factor、最大DD（USDと比率）、営業日/取引日/ノートレード日/除外日、警告 |
+| `equity_curve.html` | 上部に表示項目・今回の値・分かることの3列表。Plotly内包の資産推移にコスト控除前・控除後の2本を表示。警告・除外日も表示 |
+| `run_metadata.json` | UTC実行時刻、入力SHA-256/サイズ/行数、隣接metadataのSHA-256、Git commit/変更状態、実装コードのSHA-256、Python/依存バージョン、カレンダー、仮定 |
+
+CLIの成功ログには、結果ディレクトリに加えて`実験結果HTML：<絶対パス>`を表示します。
+HTML上部には初期資金→最終残高、純損益、グロス損益、総コスト、取引回数、勝率、
+Profit Factor、最大ドローダウンを表示します。
+控除前の線は、控除後と同じ取引・評価時点へ発生済みコストを戻した比較系列です。
+保有中は購入時の手数料・スリッページ・スプレッドだけを戻し、売却費用は決済時に加えます。
+コストゼロで売買判断・購入余力・利確損切り水準を再計算した別実験ではありません。
+両系列は初期資金を含む確定足終値時価評価で、未発生の売却費用は含みません。
+
+勝率はネット損益が正の取引割合、Profit Factorはネット利益合計÷ネット損失絶対値です。
+損失ゼロならJSONの非標準Infinityを使わず`null`、`profit_factor_status`で
+`no_losses`（利益あり）または`no_trades_or_flat`を区別します。
+最大DDの比率は各時点の過去最高資産に対する低下率。ノートレード日は有効営業日のうち取引がない日で、除外日を含みません。
+
+同一の入力バイト列・設定・コード・依存関係で`trades.csv`と`metrics.json`は再現します。
+実行ID/時刻・HTML内部IDは実行ごとに異なります。入力とハッシュは同じ読込バイト列から生成します。
+未コミット開発中はGit SHAだけでコードを再現できないため、Git変更状態と実装ハッシュも確認し、
+比較に使う版のコード・lockファイルを別途保存してください。
+
+外部API不要のE2E検証は`uv run python -m unittest tests.backtest.test_experiment_e2e -v`。
+固定の人工OHLCVを一時Parquetへ保存し、YAMLから実際のCLIプロセスを起動して、
+取引・期待損益・5種類の成果物・再実行時の再現性を確認します。部品のモックは使用しません。
+ゼロ取引のCLI検証も維持しています。
+
+テストは`tests/backtest/`内で次のように分離しています。
+
+- `fixtures.py`：共通の人工OHLCV・設定・実コンポーネント実行ヘルパー
+- `test_experiment_config.py`：YAML設定検証
+- `test_intraday_engine.py`：時系列・建玉管理・部品連携
+- `test_entry.py` / `test_exit.py` / `test_sizing.py`：各戦略
+- `test_execution.py`：仮想約定・コスト・現金
+- `test_sessions.py`：立会・DST・時刻ラベル・欠損データ
+- `test_registry.py`：戦略登録と差し替え
+- `test_experiment_metrics.py`：実験の成績集計
+- `test_runner.py`：結果保存・入力識別・品質警告
+- `test_experiment_e2e.py`：CLIから成果物までの一気通貫検証
+
+既存MVPのテストも維持しています。全テストは`uv run python -m unittest discover -v`で実行します。
 
 ## テストと検証
 
