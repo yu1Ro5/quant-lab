@@ -43,7 +43,40 @@ def experiment_metrics(
         drawdown = max(drawdown, peak - equity)
         drawdown_pct = max(drawdown_pct, (peak - equity) / peak)
     trading_days = len({t.date for t in trades})
+    wins = [p for p in net if p > 0]
+    losses = [p for p in net if p < 0]
+    average_profit = sum(wins) / len(wins) if wins else 0
+    average_loss = sum(losses) / len(losses) if losses else 0
+
+    def groups(key: str) -> list[dict[str, Any]]:
+        values = sorted(
+            {t.exit_reason if key == "reason" else t.date[:7] for t in trades}
+        )
+        rows = []
+        for value in values:
+            selected = [
+                t
+                for t in trades
+                if (t.exit_reason if key == "reason" else t.date[:7]) == value
+            ]
+            rows.append(
+                dict(
+                    group=value,
+                    total_trades=len(selected),
+                    win_rate=sum(t.net_pnl > 0 for t in selected) / len(selected),
+                    gross_pnl=sum(t.gross_pnl for t in selected),
+                    total_cost=sum(t.total_cost for t in selected),
+                    net_pnl=sum(t.net_pnl for t in selected),
+                )
+            )
+        return rows
+
     return dict(
+        average_profit=average_profit,
+        average_loss=average_loss,
+        profit_loss_ratio=average_profit / abs(average_loss) if average_loss else None,
+        exit_reason_performance=groups("reason"),
+        monthly_performance=groups("month"),
         total_trades=len(trades),
         win_rate=sum(p > 0 for p in net) / len(net) if net else 0,
         gross_pnl=sum(t.gross_pnl for t in trades),

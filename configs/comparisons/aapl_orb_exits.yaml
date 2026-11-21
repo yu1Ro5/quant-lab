@@ -1,0 +1,30 @@
+# 日付分割の構成例。2026-01〜11-18は成績確認済みであり、OOSの未使用性を意味しない。
+# 真の未使用評価では、成績未確認のデータと期間に利用者が置き換える。
+base_config: ../experiments/aapl_orb_30m.yaml
+output_directory: results
+periods:
+  in_sample:
+    start: "2026-01-01"
+    end: "2026-08-31"
+  out_of_sample:
+    start: "2026-09-01"
+    end: "2026-11-18"
+exit_candidates:
+  - name: fixed
+    strategy: fixed_stop
+    params:
+      stop_loss_pct: 0.5
+      take_profit_pct: 1.0
+      close_at_market_end: true
+  - name: trailing
+    strategy: trailing_stop
+    params:
+      stop_loss_pct: 0.5
+      trailing_stop_pct: 0.5
+      close_at_market_end: true
+  - name: time_60m
+    strategy: time_exit
+    params:
+      stop_loss_pct: 0.5
+      max_holding_minutes: 60
+      close_at_market_end: true

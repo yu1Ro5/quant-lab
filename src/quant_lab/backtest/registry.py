@@ -6,6 +6,8 @@ from typing import Any, Generic, TypeVar
 from .strategies import FixedShares, FixedStop, Orb
 from .strategies.entry import EntryStrategy
 from .strategies.exit import ExitStrategy
+from .strategies.exit.time_exit import TimeExit
+from .strategies.exit.trailing_stop import TrailingStop
 from .strategies.sizing import SizingStrategy
 from .validation import ConfigError
 
@@ -35,4 +37,6 @@ EXIT: Registry[ExitStrategy] = Registry()
 SIZING: Registry[SizingStrategy] = Registry()
 ENTRY.register("orb", Orb)
 EXIT.register("fixed_stop", FixedStop)
+EXIT.register("trailing_stop", TrailingStop)
+EXIT.register("time_exit", TimeExit)
 SIZING.register("fixed_shares", FixedShares)
