@@ -852,6 +852,7 @@ dependencies = [
     { name = "plotly" },
     { name = "pyarrow" },
     { name = "pyyaml" },
+    { name = "requests" },
     { name = "yfinance" },
 ]
 
@@ -873,6 +874,7 @@ requires-dist = [
     { name = "plotly", specifier = ">=6.1.1" },
     { name = "pyarrow", specifier = ">=20.0.0" },
     { name = "pyyaml", specifier = ">=6.0.2" },
+    { name = "requests", specifier = ">=2.34.2" },
     { name = "yfinance", specifier = ">=1.5.2" },
 ]
 

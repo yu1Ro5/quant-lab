@@ -27,7 +27,7 @@ HTMLは最大5営業日の詳細を切り替える軽量表示と、全期間の
 
 - Python 3.12以上
 - [uv](https://docs.astral.sh/uv/)
-- 実行時依存: `yfinance`、`numpy`、`pandas`、`pyarrow`、`moomoo-api`、`plotly`、`kaleido`、`PyYAML`、`exchange-calendars`
+- 実行時依存: `requests`、`yfinance`、`numpy`、`pandas`、`pyarrow`、`moomoo-api`、`plotly`、`kaleido`、`PyYAML`、`exchange-calendars`
 
 lock済みの依存関係を同期します。
 

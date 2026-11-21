@@ -13,6 +13,7 @@ dependencies = [
     "plotly>=6.1.1",
     "pyarrow>=20.0.0",
     "pyyaml>=6.0.2",
+    "requests>=2.34.2",
     "yfinance>=1.5.2",
 ]
 
