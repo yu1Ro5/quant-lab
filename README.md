@@ -449,6 +449,11 @@ Entry・Exit・Sizingを独立に指定して、保存済み5分足Parquetから
 
 ```bash
 uv sync --locked
+# 品質検証のみ。現在のAAPLは未検証項目があるため終了コード2
+uv run python -m quant_lab.backtest --config configs/experiments/aapl_orb_30m.yaml --quality-only
+# 暫定値の診断再現（正式評価ではない）
+uv run python -m quant_lab.backtest --config configs/experiments/aapl_orb_30m.yaml --diagnostic
+# 全必須品質検査passのデータだけ正式評価
 uv run python -m quant_lab.backtest --config configs/experiments/aapl_orb_30m.yaml
 
 # 既存MVP
@@ -569,9 +574,12 @@ moomoo取得データの`datetime`はUTCで、観測上の09:35〜16:00から終
 `interval_start_utc`はその仮説による派生値で、今回の入力では使いません。
 `adjustment: none/forward/backward`は入力データの申告条件で、バックテスト側では再調整しません。
 隣接する`<stem>_metadata.json`があればハッシュ・銘柄・足種・判明している条件を照合し、
-不一致なら拒否します。正式な時刻定義未確認や`backtest_ready=false`は結果の警告にも残します。
-メタデータがなくても実行できますが、設定値からデータの調整条件を推測/保証はできません。
-提供元の時刻意味と日足の出来高差分は未解決です。構造検証成功を品質保証とは扱いません。
+不一致なら拒否します。Issue #37以降は全必須検査がpassでなければ正式評価を禁止します。
+メタデータ欠如や正式仕様未確認はunknownとし、`--diagnostic`を明示した診断だけ暫定表示付きで許可します。
+`backtest_ready`は毎回検証根拠から計算し、入力metadataのフラグは流用しません。
+11月18日の1分足→5分足OHLC全78本一致は終了ラベルを強く支持しますが、正式定義と出来高差分は未解決です。
+構造検証成功を品質保証とは扱いません。
+[品質検査・根拠ファイル・日足比較・実データ調査・再実行手順](docs/backtest-data-quality.md)を参照してください。
 
 ### 約定モデルと損益
 
@@ -610,7 +618,7 @@ OHLCVでは到達順序・板・実際のスプレッド・流動性・部分約
 ### 結果と再現性
 
 毎回`results/<実験名>_<UTC時刻マイクロ秒>_<ランダムID>/`を排他的に作成し、過去runを上書きしません。
-出力途中の失敗時は`FAILED`を残し、成功した結果と区別します。
+出力途中の失敗時は`FAILED`、品質ゲートでの実行拒否時は`BLOCKED`を残します。
 
 | 成果物 | 内容 |
 | --- | --- |
@@ -618,6 +626,8 @@ OHLCVでは到達順序・板・実際のスプレッド・流動性・部分約
 | `trades.csv` | 全取引、東部取引日、symbol、ORB High/Low、シグナル/約定時刻、株数、基準/実約定価格、決済理由、コスト前/後USD損益と内訳。ゼロ取引でもヘッダーを保存 |
 | `metrics.json` | 取引回数、勝率、グロス/コスト/ネット、平均ネット、Profit Factor、最大DD（USDと比率）、営業日/取引日/ノートレード日/除外日、警告 |
 | `equity_curve.html` | 上部に表示項目・今回の値・分かることの3列表。Plotly内包の資産推移にコスト控除前・控除後の2本を表示。警告・除外日も表示 |
+| `quality.json` / `quality.md` | 全必須品質検査のpass/fail/unknown、入力・根拠、日別欠損・除外日、ready判定。拒否時も保存 |
+| `daily_comparison.csv` | 通常立会の集計OHLCV、日足参照、生差分・相対差。条件未確認はunknown |
 | `run_metadata.json` | UTC実行時刻、入力SHA-256/サイズ/行数、隣接metadataのSHA-256、Git commit/変更状態、実装コードのSHA-256、Python/依存バージョン、カレンダー、仮定 |
 
 CLIの成功ログには、結果ディレクトリに加えて`実験結果HTML：<絶対パス>`を表示します。
