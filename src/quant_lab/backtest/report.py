@@ -14,9 +14,18 @@ from .models import CompletedTrade, ExperimentResult
 
 
 def write_reports(
-    directory: Path, result: ExperimentResult, initial_capital: float
+    directory: Path,
+    result: ExperimentResult,
+    initial_capital: float,
+    *,
+    quality: dict[str, Any] | None = None,
+    diagnostic: bool = False,
 ) -> None:
     metrics = experiment_metrics(result, initial_capital)
+    if quality is not None:
+        metrics["backtest_ready"] = quality["backtest_ready"]
+        metrics["evaluation_status"] = "provisional" if diagnostic else "formal"
+        metrics["quality_reasons"] = quality["reasons"]
     columns = [f.name for f in fields(CompletedTrade)]
     pd.DataFrame([asdict(t) for t in result.trades], columns=columns).to_csv(
         directory / "trades.csv", index=False
@@ -40,6 +49,13 @@ def write_reports(
         )
     )
     document = curve.to_html(full_html=True, include_plotlyjs=True)
+    if quality is not None:
+        state = "暫定・診断専用" if diagnostic else "正式評価"
+        document = document.replace(
+            "<body>",
+            f"<body><h1>{state}</h1><p>backtest_ready={quality['backtest_ready']}; 詳細: quality.md / quality.json</p>",
+            1,
+        )
     document = document.replace("<body>", "<body>" + summary_table(metrics), 1)
     document = document.replace(
         "</body>", f"<h2>警告・除外日</h2><pre>{notes}</pre></body>"

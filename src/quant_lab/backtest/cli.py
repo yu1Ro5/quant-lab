@@ -19,6 +19,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("parquet_path", nargs="?", help="入力するParquetファイルのパス")
     parser.add_argument("--config", help="YAML実験設定のパス")
+    parser.add_argument(
+        "--diagnostic", action="store_true", help="未検証入力による診断専用の暫定実行"
+    )
+    parser.add_argument(
+        "--quality-only", action="store_true", help="品質検証レポートのみ生成"
+    )
     return parser
 
 
@@ -27,12 +33,26 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if bool(args.config) == bool(args.parquet_path):
         parser.error("Parquetパスまたは--configの一方だけを指定してください")
+    if (args.diagnostic or args.quality_only) and not args.config:
+        parser.error("--diagnostic/--quality-onlyは--configと併用してください")
     if args.config:
         try:
-            directory = run_experiment(load_config(args.config))
+            directory = run_experiment(
+                load_config(args.config),
+                diagnostic=args.diagnostic,
+                quality_only=args.quality_only,
+            )
         except (ConfigError, DataValidationError, OSError, ValueError) as error:
             print(f"エラー: {error}", file=sys.stderr)
             return 1
+        if args.quality_only:
+            import json
+
+            ready = json.loads((directory / "quality.json").read_text())[
+                "backtest_ready"
+            ]
+            print(f"品質レポート: {directory / 'quality.md'}; backtest_ready={ready}")
+            return 0 if ready else 2
         print(f"実験結果: {directory}")
         print(f"実験結果HTML：{directory / 'equity_curve.html'}")
         return 0

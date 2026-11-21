@@ -9,6 +9,7 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from importlib.metadata import version
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 import pandas as pd
@@ -17,11 +18,14 @@ import yaml
 from .config import ExperimentConfig, parse_config
 from .data import DataValidationError
 from .intraday_engine import ExperimentEngine
+from .quality import assess_quality, read_json, sha256, write_quality
 from .report import write_reports
 from .sessions import prepare_sessions
 
 
-def run_experiment(config: ExperimentConfig) -> Path:
+def run_experiment(
+    config: ExperimentConfig, *, diagnostic: bool = False, quality_only: bool = False
+) -> Path:
     # Python API経由でも検証し、実行時の絶対パスをスナップショットへ保存する。
     config = parse_config(config.snapshot())
     source = Path(config.data.path).resolve()
@@ -40,58 +44,86 @@ def run_experiment(config: ExperimentConfig) -> Path:
             f"Parquetを読み込めません: {source}: {error}"
         ) from error
     digest = hashlib.sha256(payload).hexdigest()
-    sidecar = source.with_name(source.stem + "_metadata.json")
-    metadata_digest: str | None = None
-    input_warnings = [
-        "入力の時刻ラベル・株価調整条件は設定の申告値です。外部品質照合は実施しません。"
-    ]
-    if sidecar.is_file():
-        try:
-            sidecar_bytes = sidecar.read_bytes()
-            upstream = json.loads(sidecar_bytes)
-        except (OSError, ValueError) as error:
-            raise DataValidationError(f"入力metadataを読めません: {error}") from error
-        if not isinstance(upstream, dict):
-            raise DataValidationError("入力metadataはJSON objectである必要があります")
-        metadata_digest = hashlib.sha256(sidecar_bytes).hexdigest()
-        for key, expected in [
-            ("dataset_sha256", digest),
-            ("symbol", config.data.symbol),
-            ("ktype", "K_5M"),
-        ]:
-            if key in upstream and upstream[key] != expected:
-                raise DataValidationError(
-                    f"入力metadataの{key}が設定/入力と一致しません"
-                )
-        if upstream.get("autype") == "NONE" and config.data.adjustment != "none":
-            raise DataValidationError(
-                "入力metadataのautype=NONEとadjustmentが一致しません"
-            )
-        label = upstream.get("timestamp_label", {})
-        if isinstance(label, dict):
-            interpretation = label.get("interpretation", "")
-            for kind in ("start", "end"):
-                if (
-                    interpretation in (kind, kind + "_inferred")
-                    and config.data.bar_timestamp != kind
-                ):
-                    raise DataValidationError(
-                        "入力metadataのtimestamp_labelとbar_timestampが一致しません"
-                    )
-            if label.get("official_confirmation") == "unconfirmed":
-                input_warnings.append(
-                    "入力の足時刻定義は提供元の正式確認が未完了です（終了/開始ラベルは仮定）。"
-                )
-        if upstream.get("backtest_ready") is False:
-            input_warnings.append(
-                "入力metadata: backtest_ready=false。時刻定義・日足との価格/出来高差分は未解決です。"
-            )
-    prepared = prepare_sessions(frame, config)
-    prepared.warnings.extend(input_warnings)
-    result = ExperimentEngine(config).run(prepared)
     run_id = f"{config.name}_{started.strftime('%Y%m%dT%H%M%S%fZ')}_{uuid4().hex[:12]}"
     directory = output / run_id
     directory.mkdir(parents=True, exist_ok=False)
+    sidecar = source.with_name(source.stem + "_metadata.json")
+    metadata_digest: str | None = None
+    upstream: dict[str, Any] = {}
+    evidence: dict[str, Any] = {}
+    reference_metadata: dict[str, Any] = {}
+    reference, reference_digest = None, None
+    errors = []
+    try:
+        upstream, metadata_digest = read_json(sidecar)
+    except (OSError, ValueError) as error:
+        errors.append(f"入力metadata: {error}")
+    for key in ("evidence_path", "daily_metadata_path", "daily_reference_path"):
+        path = getattr(config.quality, key)
+        if path is None:
+            continue
+        try:
+            if not Path(path).is_file():
+                raise ValueError(f"ファイルがありません: {path}")
+            if key == "evidence_path":
+                evidence, _ = read_json(Path(path))
+            elif key == "daily_metadata_path":
+                reference_metadata, _ = read_json(Path(path))
+            else:
+                content = Path(path).read_bytes()
+                reference = pd.read_csv(io.BytesIO(content))
+                reference_digest = sha256(content)
+        except (OSError, ValueError) as error:
+            errors.append(f"{key}: {error}")
+    quality = assess_quality(
+        frame,
+        config,
+        digest,
+        metadata=upstream,
+        metadata_sha256=metadata_digest,
+        evidence=evidence,
+        reference=reference,
+        reference_metadata=reference_metadata,
+        reference_sha256=reference_digest,
+    )
+    if errors:
+        quality["checks"]["input_artifacts"] = dict(status="fail", detail=errors)
+        quality["backtest_ready"] = False
+        quality["reasons"].append("input_artifacts: fail")
+        quality["warnings"].extend(errors)
+        quality["errors"].extend(errors)
+    quality["artifacts"] = {
+        key: getattr(config.quality, key)
+        for key in ("evidence_path", "daily_reference_path", "daily_metadata_path")
+    }
+    (directory / "config.yaml").write_text(
+        yaml.safe_dump(config.snapshot(), allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
+    write_quality(directory, quality)
+    if quality_only:
+        return directory
+    diagnostic = diagnostic or config.quality.mode == "diagnostic"
+    hard_failure = errors or any(
+        quality["checks"][name]["status"] == "fail"
+        for name in ("schema", "ohlcv", "timestamps", "metadata")
+    )
+    if hard_failure or (not diagnostic and not quality["backtest_ready"]):
+        (directory / "BLOCKED").write_text(
+            "品質ゲートで正式評価を拒否\n", encoding="utf-8"
+        )
+        raise DataValidationError(
+            f"品質検証を通過していません。品質レポート: {directory / 'quality.md'}; "
+            + ", ".join(quality["reasons"])
+            + "。未検証の診断には--diagnosticを明示してください。"
+        )
+    prepared = prepare_sessions(frame, config)
+    if diagnostic:
+        prepared.warnings.append(
+            "診断専用の暫定結果です。正式評価には使用しないでください。"
+        )
+    prepared.warnings.extend(quality["warnings"])
+    result = ExperimentEngine(config).run(prepared)
     repo = Path(__file__).resolve().parents[3]
 
     def git(*args: str) -> str | None:
@@ -138,19 +170,23 @@ def run_experiment(config: ExperimentConfig) -> Path:
             ]
         },
         calendar="XNYS",
-        schema_version=1,
+        schema_version=2,
+        backtest_ready=quality["backtest_ready"],
+        evaluation_status="provisional" if diagnostic else "formal",
         assumptions=[
             "OHLC-only conservative stop priority",
             "complete sessions only",
-            "bar_timestamp and adjustment supplied by config; not externally verified",
+            "data contract and daily checks recorded in quality.json",
         ],
     )
     try:
-        (directory / "config.yaml").write_text(
-            yaml.safe_dump(config.snapshot(), allow_unicode=True, sort_keys=False),
-            encoding="utf-8",
+        write_reports(
+            directory,
+            result,
+            config.initial_capital,
+            quality=quality,
+            diagnostic=diagnostic,
         )
-        write_reports(directory, result, config.initial_capital)
         (directory / "run_metadata.json").write_text(
             json.dumps(metadata, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
             encoding="utf-8",

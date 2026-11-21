@@ -34,3 +34,6 @@ portfolio:
   max_trades_per_day: 1
 output:
   directory: results
+# 省略時もformal。未検証のAAPLを調査する場合はCLIで--diagnosticを明示。
+quality:
+  mode: formal

@@ -39,6 +39,14 @@ class ExecutionConfig:
 
 
 @dataclass(frozen=True)
+class QualityConfig:
+    mode: str = "formal"
+    evidence_path: str | None = None
+    daily_reference_path: str | None = None
+    daily_metadata_path: str | None = None
+
+
+@dataclass(frozen=True)
 class ExperimentConfig:
     name: str
     data: DataConfig
@@ -51,6 +59,7 @@ class ExperimentConfig:
     initial_capital: float
     max_trades_per_day: int
     output_directory: str
+    quality: QualityConfig = QualityConfig()
 
     def snapshot(self) -> dict[str, Any]:
         return dict(
@@ -66,6 +75,7 @@ class ExperimentConfig:
                 "max_trades_per_day": self.max_trades_per_day,
             },
             output={"directory": self.output_directory},
+            quality=asdict(self.quality),
         )
 
 
@@ -83,7 +93,7 @@ def parse_config(raw: Any) -> ExperimentConfig:
             "execution",
             "portfolio",
         },
-        {"output"},
+        {"output", "quality"},
     )
     experiment = mapping(root["experiment"], "experiment", {"name"})
     name = text(experiment["name"], "experiment.name")
@@ -163,6 +173,21 @@ def parse_config(raw: Any) -> ExperimentConfig:
     output = mapping(
         root.get("output", {"directory": "results"}), "output", {"directory"}
     )
+    quality = mapping(
+        root.get("quality", {}),
+        "quality",
+        set(),
+        {"mode", "evidence_path", "daily_reference_path", "daily_metadata_path"},
+    )
+    if quality.get("mode", "formal") not in ("formal", "diagnostic"):
+        raise ConfigError("quality.mode: formal/diagnosticを指定してください")
+    for key in ("evidence_path", "daily_reference_path", "daily_metadata_path"):
+        if quality.get(key) is not None:
+            text(quality[key], f"quality.{key}")
+    if quality.get("daily_metadata_path") and not quality.get("daily_reference_path"):
+        raise ConfigError(
+            "quality.daily_metadata_pathにはdaily_reference_pathが必要です"
+        )
     return ExperimentConfig(
         name,
         DataConfig(**data),
@@ -175,6 +200,7 @@ def parse_config(raw: Any) -> ExperimentConfig:
         capital,
         max_trades,
         text(output["directory"], "output.directory"),
+        QualityConfig(**quality),
     )
 
 

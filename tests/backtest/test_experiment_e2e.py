@@ -33,7 +33,7 @@ class ExperimentE2ETests(unittest.TestCase):
             path.write_text(yaml.safe_dump(raw))
             stdout, stderr = io.StringIO(), io.StringIO()
             with redirect_stdout(stdout), redirect_stderr(stderr):
-                self.assertEqual(main(["--config", str(path)]), 0)
+                self.assertEqual(main(["--config", str(path), "--diagnostic"]), 0)
                 self.assertEqual(main(["--config", str(root / "missing")]), 1)
             run = next((root / "results").iterdir())
             self.assertEqual(len(pd.read_csv(run / "trades.csv")), 0)
@@ -67,6 +67,7 @@ class ExperimentE2ETests(unittest.TestCase):
                         "quant_lab.backtest",
                         "--config",
                         str(config),
+                        "--diagnostic",
                     ],
                     capture_output=True,
                     text=True,
