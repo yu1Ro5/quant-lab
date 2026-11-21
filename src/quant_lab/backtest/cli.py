@@ -6,6 +6,7 @@ from collections.abc import Sequence
 
 from .broker import DummyBroker
 from .config import ConfigError, load_config
+from .cost_sensitivity import run_cost_comparison
 from .data import DataValidationError, load_parquet
 from .engine import BacktestEngine
 from .metrics import calculate_metrics
@@ -19,6 +20,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("parquet_path", nargs="?", help="入力するParquetファイルのパス")
     parser.add_argument("--config", help="YAML実験設定のパス")
+    parser.add_argument("--compare-costs", help="コスト比較YAMLのパス")
     parser.add_argument(
         "--diagnostic", action="store_true", help="未検証入力による診断専用の暫定実行"
     )
@@ -31,10 +33,27 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    if bool(args.config) == bool(args.parquet_path):
-        parser.error("Parquetパスまたは--configの一方だけを指定してください")
-    if (args.diagnostic or args.quality_only) and not args.config:
+    if sum(bool(v) for v in (args.config, args.parquet_path, args.compare_costs)) != 1:
+        parser.error(
+            "Parquetパス・--config・--compare-costsの一つだけを指定してください"
+        )
+    if args.quality_only and args.compare_costs:
+        parser.error("--quality-onlyは--compare-costsでは使用できません")
+    if (args.diagnostic or args.quality_only) and not (
+        args.config or args.compare_costs
+    ):
         parser.error("--diagnostic/--quality-onlyは--configと併用してください")
+    if args.compare_costs:
+        try:
+            directory = run_cost_comparison(
+                args.compare_costs, diagnostic=args.diagnostic
+            )
+        except (ConfigError, DataValidationError, OSError, ValueError) as error:
+            print(f"エラー: {error}", file=sys.stderr)
+            return 1
+        print(f"比較結果: {directory}")
+        print(f"比較結果HTML：{directory / 'comparison.html'}")
+        return 0
     if args.config:
         try:
             directory = run_experiment(

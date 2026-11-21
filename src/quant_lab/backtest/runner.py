@@ -15,6 +15,7 @@ from uuid import uuid4
 import pandas as pd
 import yaml
 
+from .broker_fees import fee_model_metadata
 from .config import ExperimentConfig, parse_config
 from .data import DataValidationError
 from .intraday_engine import ExperimentEngine
@@ -171,6 +172,11 @@ def run_experiment(
         },
         calendar="XNYS",
         schema_version=2,
+        execution_cost_model=(
+            fee_model_metadata()
+            if config.execution.cost_model == "webull_jp_us_equity"
+            else {"cost_model": "fixed"}
+        ),
         backtest_ready=quality["backtest_ready"],
         evaluation_status="provisional" if diagnostic else "formal",
         assumptions=[

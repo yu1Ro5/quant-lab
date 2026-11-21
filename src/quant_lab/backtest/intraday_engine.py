@@ -100,7 +100,7 @@ class ExperimentEngine:
                     equity += position.shares * bar.close
                     incurred_cost += (
                         position.entry_price - position.reference_price
-                    ) * position.shares + config.execution.commission_usd_per_side
+                    ) * position.shares + position.entry_fees
                 result.equity.append(
                     {
                         "time": bar.end,
