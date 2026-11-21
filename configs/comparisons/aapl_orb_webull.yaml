@@ -1,0 +1,22 @@
+base_config: ../experiments/aapl_orb_30m.yaml
+output_directory: results
+scenarios:
+  - name: zero_friction
+    spread_bps_per_side: 0
+    slippage_bps_per_side: 0
+  - name: low
+    spread_bps_per_side: 0.5
+    slippage_bps_per_side: 0.5
+  - name: baseline
+    spread_bps_per_side: 1
+    slippage_bps_per_side: 2
+  - name: high
+    spread_bps_per_side: 2
+    slippage_bps_per_side: 5
+  # 片方を固定した追加点。baselineとの符号変化を区間として報告する。
+  - name: spread_zero
+    spread_bps_per_side: 0
+    slippage_bps_per_side: 2
+  - name: slippage_zero
+    spread_bps_per_side: 1
+    slippage_bps_per_side: 0

@@ -36,6 +36,9 @@ class ExecutionConfig:
     commission_usd_per_side: float
     slippage_bps_per_side: float
     spread_bps_per_side: float
+    cost_model: str = "fixed"
+    cat_route: str = "exchange"
+    fee_schedule: str = "2026-11-21"
 
 
 @dataclass(frozen=True)
@@ -157,8 +160,27 @@ def parse_config(raw: Any) -> ExperimentConfig:
         root["execution"],
         "execution",
         {"commission_usd_per_side", "slippage_bps_per_side", "spread_bps_per_side"},
+        {"cost_model", "cat_route", "fee_schedule"},
     )
-    costs = {key: number(value, f"execution.{key}") for key, value in execution.items()}
+    costs = {
+        key: number(execution[key], f"execution.{key}")
+        for key in (
+            "commission_usd_per_side",
+            "slippage_bps_per_side",
+            "spread_bps_per_side",
+        )
+    }
+    model = execution.get("cost_model", "fixed")
+    route = execution.get("cat_route", "exchange")
+    schedule = execution.get("fee_schedule", "2026-11-21")
+    if model not in ("fixed", "webull_jp_us_equity"):
+        raise ConfigError("execution.cost_model: fixed/webull_jp_us_equityが必要です")
+    if route not in ("exchange", "otc") or schedule != "2026-11-21":
+        raise ConfigError("execution: cat_routeまたはfee_scheduleが不正です")
+    if model == "webull_jp_us_equity" and not data["symbol"].startswith("US."):
+        raise ConfigError("WebullモデルはUS.銘柄のみ対応します")
+    if model == "webull_jp_us_equity" and costs["commission_usd_per_side"] != 0:
+        raise ConfigError("Webullモデルでは固定委託手数料を0にしてください")
     if costs["slippage_bps_per_side"] + costs["spread_bps_per_side"] >= 10_000:
         raise ConfigError(
             "execution: slippageとspreadの合計は10000bps未満にしてください"
@@ -196,7 +218,9 @@ def parse_config(raw: Any) -> ExperimentConfig:
         components[0],
         components[1],
         components[2],
-        ExecutionConfig(**costs),
+        ExecutionConfig(
+            **costs, cost_model=model, cat_route=route, fee_schedule=schedule
+        ),
         capital,
         max_trades,
         text(output["directory"], "output.directory"),
