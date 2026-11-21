@@ -44,6 +44,7 @@ class Position:
     reference_price: float
     entry_price: float
     signal: EntrySignal
+    entry_fees: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -67,6 +68,9 @@ class CompletedTrade:
     spread: float
     total_cost: float
     net_pnl: float
+    sec_fee: float = 0.0
+    finra_fee: float = 0.0
+    cat_fee: float = 0.0
 
 
 @dataclass

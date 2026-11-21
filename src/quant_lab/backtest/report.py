@@ -26,6 +26,8 @@ def write_reports(
         metrics["backtest_ready"] = quality["backtest_ready"]
         metrics["evaluation_status"] = "provisional" if diagnostic else "formal"
         metrics["quality_reasons"] = quality["reasons"]
+        metrics["input_sha256"] = quality["dataset_sha256"]
+        metrics["input_metadata_sha256"] = quality["metadata_sha256"]
     columns = [f.name for f in fields(CompletedTrade)]
     pd.DataFrame([asdict(t) for t in result.trades], columns=columns).to_csv(
         directory / "trades.csv", index=False
