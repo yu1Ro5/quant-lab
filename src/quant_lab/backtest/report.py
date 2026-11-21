@@ -42,6 +42,21 @@ def write_reports(
         + "\n",
         encoding="utf-8",
     )
+    for key in ("exit_reason_performance", "monthly_performance"):
+        pd.DataFrame(
+            metrics[key],
+            columns=[
+                "group",
+                "total_trades",
+                "win_rate",
+                "gross_pnl",
+                "total_cost",
+                "net_pnl",
+            ],
+        ).to_csv(directory / f"{key}.csv", index=False)
+    pd.DataFrame(result.equity, columns=["time", "equity", "gross_equity"]).to_csv(
+        directory / "equity.csv", index=False
+    )
     curve = equity_figure(result)
     notes = html.escape(
         json.dumps(

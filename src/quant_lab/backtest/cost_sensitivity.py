@@ -1,6 +1,5 @@
 """同じ入力の保存済みバイト列から、各費用条件でEngineを再実行する。"""
 
-import hashlib
 import json
 import re
 from dataclasses import replace
@@ -12,6 +11,7 @@ from uuid import uuid4
 import yaml
 
 from .broker_fees import fee_model_metadata
+from .comparison_inputs import snapshot_inputs, verify_inputs
 from .config import UniqueKeyLoader, load_config, parse_config
 from .cost_report import write_cost_reports
 from .runner import run_experiment
@@ -95,48 +95,7 @@ def run_cost_comparison(path: str | Path, *, diagnostic: bool = False) -> Path:
     )
     directory.mkdir(parents=True, exist_ok=False)
     try:
-        # 原本が途中で更新されても、全シナリオが同一バイト列を使う。
-        inputs = directory / "inputs"
-        inputs.mkdir()
-        source = Path(base.data.path).resolve()
-        artifacts: dict[str, Any] = {}
-
-        def snapshot(
-            label: str, original: Path, target: Path, *, optional: bool = False
-        ) -> None:
-            payload = (
-                original.read_bytes() if not optional or original.is_file() else None
-            )
-            artifacts[label] = dict(
-                original_path=str(original),
-                snapshot_path=str(target),
-                sha256=hashlib.sha256(payload).hexdigest()
-                if payload is not None
-                else None,
-            )
-            if payload is not None:
-                target.write_bytes(payload)
-
-        saved = inputs / source.name
-        snapshot("data", source, saved)
-        snapshot(
-            "metadata",
-            source.with_name(source.stem + "_metadata.json"),
-            saved.with_name(saved.stem + "_metadata.json"),
-            optional=True,
-        )
-        quality_paths = {}
-        for key in ("evidence_path", "daily_reference_path", "daily_metadata_path"):
-            original = getattr(base.quality, key)
-            if original is not None:
-                target = inputs / f"{key}{Path(original).suffix}"
-                snapshot(key, Path(original).resolve(), target)
-                quality_paths[key] = str(target)
-        base = replace(
-            base,
-            data=replace(base.data, path=str(saved)),
-            quality=replace(base.quality, **quality_paths),
-        )
+        base, artifacts = snapshot_inputs(base, directory)
         manifest: dict[str, Any] = dict(
             base_config_path=str(base_path.resolve()),
             base_config=base.snapshot(),
@@ -200,16 +159,7 @@ def run_cost_comparison(path: str | Path, *, diagnostic: bool = False) -> Path:
                     quality=quality,
                 )
             )
-        # 公開前にも保存済み入力を検査。品質根拠を含む全ファイルを固定する。
-        for artifact in artifacts.values():
-            target = Path(artifact["snapshot_path"])
-            actual = (
-                hashlib.sha256(target.read_bytes()).hexdigest()
-                if target.is_file()
-                else None
-            )
-            if actual != artifact["sha256"]:
-                raise ValueError("比較中に保存済み入力または品質根拠が変更されました")
+        verify_inputs(artifacts)
         manifest["break_even"] = break_even(rows)
         write_cost_reports(directory, rows, manifest)
     except Exception:
