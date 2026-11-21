@@ -9,6 +9,7 @@ from .config import ConfigError, load_config
 from .cost_sensitivity import run_cost_comparison
 from .data import DataValidationError, load_parquet
 from .engine import BacktestEngine
+from .exit_comparison import run_exit_comparison
 from .metrics import calculate_metrics
 from .runner import run_experiment
 from .strategy import BreakoutStrategy
@@ -20,6 +21,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("parquet_path", nargs="?", help="入力するParquetファイルのパス")
     parser.add_argument("--config", help="YAML実験設定のパス")
+    parser.add_argument("--compare-exits", help="Exit比較YAMLのパス")
     parser.add_argument("--compare-costs", help="コスト比較YAMLのパス")
     parser.add_argument(
         "--diagnostic", action="store_true", help="未検証入力による診断専用の暫定実行"
@@ -33,16 +35,37 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    if sum(bool(v) for v in (args.config, args.parquet_path, args.compare_costs)) != 1:
-        parser.error(
-            "Parquetパス・--config・--compare-costsの一つだけを指定してください"
+    if (
+        sum(
+            bool(v)
+            for v in (
+                args.config,
+                args.parquet_path,
+                args.compare_costs,
+                args.compare_exits,
+            )
         )
-    if args.quality_only and args.compare_costs:
-        parser.error("--quality-onlyは--compare-costsでは使用できません")
-    if (args.diagnostic or args.quality_only) and not (
-        args.config or args.compare_costs
+        != 1
     ):
-        parser.error("--diagnostic/--quality-onlyは--configと併用してください")
+        parser.error(
+            "Parquetパス・--config・--compare-costs・--compare-exitsの一つだけを指定してください"
+        )
+    if args.quality_only and (args.compare_costs or args.compare_exits):
+        parser.error("--quality-onlyは比較実行では使用できません")
+    if (args.diagnostic or args.quality_only) and not (
+        args.config or args.compare_costs or args.compare_exits
+    ):
+        parser.error("--diagnostic/--quality-onlyはYAML実行と併用してください")
+    if args.compare_exits:
+        try:
+            directory = run_exit_comparison(
+                args.compare_exits, diagnostic=args.diagnostic
+            )
+        except (ConfigError, DataValidationError, OSError, ValueError) as error:
+            print(f"エラー: {error}", file=sys.stderr)
+            return 1
+        print(f"比較結果: {directory / 'comparison.html'}")
+        return 0
     if args.compare_costs:
         try:
             directory = run_cost_comparison(
