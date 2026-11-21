@@ -216,7 +216,7 @@ uvキャッシュ権限エラー時だけAGENTS.mdに従い`UV_CACHE_DIR=/tmp/qu
 | 追加・テスト | `tests/backtest/test_quality.py`, `tests/backtest/test_quality_gate.py`, `tests/backtest/test_orb_timing.py` |
 | 変更・回帰テスト | `tests/backtest/test_runner.py`, `tests/backtest/test_experiment_e2e.py`（明示診断へ変更） |
 | 変更・設定/文書 | `configs/experiments/aapl_orb_30m.yaml`, `README.md`, `docs/moomoo-intraday.md` |
-| 追加・文書 | `docs/backtest-data-quality.md`, `docs/superpowers/plans/2026-11-20-issue37.md` |
+| 追加・文書 | `docs/backtest-data-quality.md` |
 
 既存の取得パイプライン・ORB/約定ロジック・依存関係は変更していない。
 実相場と個人用設定はGit対象外の`results/`にのみ出力した。
