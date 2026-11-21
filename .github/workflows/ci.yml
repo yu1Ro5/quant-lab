@@ -38,7 +38,7 @@ jobs:
         run: uv sync --locked
 
       - name: Verify stock library imports
-        run: uv run --locked python -c "import moomoo; import plotly; import kaleido"
+        run: uv run --locked python -c "import moomoo; import plotly; import kaleido; import yfinance"
 
       - name: Run ruff
         run: uv run --locked ruff check .

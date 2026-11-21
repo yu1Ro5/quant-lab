@@ -14,7 +14,6 @@ dependencies = [
     "pyarrow>=20.0.0",
     "pyyaml>=6.0.2",
     "requests>=2.34.2",
-    "slack-sdk>=3.33.0",
     "yfinance>=1.5.2",
 ]
 
@@ -34,5 +33,4 @@ dev = [
     "pandas-stubs>=2.3.0",
     "ruff>=0.16.0",
     "types-pyyaml>=6.0.12.20261113",
-    "types-requests>=2.33.0.20260712",
 ]
