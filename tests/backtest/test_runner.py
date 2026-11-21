@@ -22,7 +22,10 @@ class RunnerTests(unittest.TestCase):
             raw["data"]["path"] = str(source)
             raw["output"]["directory"] = str(root / "results")
             config = parse_config(raw)
-            first, second = run_experiment(config), run_experiment(config)
+            first, second = (
+                run_experiment(config, diagnostic=True),
+                run_experiment(config, diagnostic=True),
+            )
             self.assertNotEqual(first, second)
             for name in [
                 "config.yaml",
@@ -59,10 +62,10 @@ class RunnerTests(unittest.TestCase):
             sidecar = root / "input_metadata.json"
             sidecar.write_text(json.dumps({"dataset_sha256": "wrong"}))
             with self.assertRaises(DataValidationError):
-                run_experiment(config)
+                run_experiment(config, diagnostic=True)
             sidecar.write_text(json.dumps({"symbol": "US.OTHER"}))
             with self.assertRaises(DataValidationError):
-                run_experiment(config)
+                run_experiment(config, diagnostic=True)
             sidecar.write_text(
                 json.dumps(
                     {
@@ -74,7 +77,7 @@ class RunnerTests(unittest.TestCase):
                     }
                 )
             )
-            run = run_experiment(config)
+            run = run_experiment(config, diagnostic=True)
             metrics = json.loads((run / "metrics.json").read_text())
             self.assertTrue(metrics["warnings"])
             metadata = json.loads((run / "run_metadata.json").read_text())
