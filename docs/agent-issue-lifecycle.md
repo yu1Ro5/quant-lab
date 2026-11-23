@@ -28,6 +28,18 @@
 - ラベル付け権限を持つ利用者が状態ラベルを直接変更しても、それだけで実行権限・実行完了・PRマージ可能性は与えない。変更にはサーバー側の検証が必要。
 - ラベル名と色は仕様値。GitHubリポジトリへのラベル登録は管理者が行い、同名ラベルの用途が異なる場合は上書きせず確認する。
 
+管理者向け初期作成コマンド（**実行前に既存ラベルと衝突しないことを確認**。`--force` は使わない）：
+
+```bash
+gh label create 'agent:ready' --color '0E8A16' --description 'Human-authorized request to start an agent run'
+gh label create 'agent:running' --color '1D76DB' --description 'Agent execution active under an exclusive claim'
+gh label create 'agent:review' --color 'FBCA04' --description 'PR pending CI, review or repair decision'
+gh label create 'agent:needs-input' --color 'D93F0B' --description 'Agent halted; human intervention is required'
+gh label create 'agent:ready-to-merge' --color '5319E7' --description 'Checks complete; human merge decision required'
+```
+
+作成後は `gh label list` で確認する。初期状態ではラベルだけが存在し、自動起動するWorkflowを有効にしない。
+
 ## 3. 状態遷移
 
 ```mermaid
@@ -52,13 +64,15 @@ stateDiagram-v2
 **遷移の前提：**
 1. `Ready -> Running` は、(a)起動フラグ有効、(b)Issueオープン、(c)イベントが `issues.labeled` の `agent:ready`、(d)イベント送信者が許可リスト内かつリポジトリの `write` 以上の権限、(e)状態・既存PR・依存条件の再確認、(f)Issue単位の排他claim成功、の全てを必要とする。初期段階では他のトリガーを許可しない。
 2. `Running -> Review` はPR番号・ブランチ・開始コミット・run IDを記録してから行う。PRが未作成なら `needs-input` にし、原因を残す。
-3. `Review -> Running` は同一作業系統の修正再開であり、新規Issue実行として数えない。修正上限と停止フラグを再確認する。
+3. `Review -> Running` は同一Issue・既存PRに対する修正再開であり、新しいPRを作らない。**新しいworker実行ごとに別のrun IDで排他claimを再取得**するが、`repair_count` はIssue・PR単位で通算する。修正上限と停止フラグを再確認する。
 4. `Review -> ReadyToMerge` はCI、レビュー、必要な実機確認などの**実際の**完了を確認してから行う。ラベルだけでマージできることにはしない。
 5. `needs-input -> ready` は、人間が原因と残タスクを確認し、実行停止・ロック解放を確認した後の**明示的な再付与**である。自動再付与しない。
 6. どの状態からでも人間による停止要求を受け付ける。稼働中は停止完了・ロック清算を確認するまで次の実行を許可しない。
 7. 許可されない遷移は無視して監査記録し、状態の競合や不整合なら `needs-input` への手動修正を要求する。自動的に循環しない。
 
 ## 4. 複数イベント・再送に対する排他と冪等性
+
+**claimは一つのworker実行中だけ保持する。** `running -> review` でworkerを終了し、監査更新後にロックを解放する。レビュー待ちの間はロックを保持し続けない。レビュー指摘による次の修正は同じPRを対象として改めてclaimを取得し、複数workerが同じIssue/PRを同時編集しないことを保証する。GitHub全体のレビュー待ち状態はラベルとrun記録で追跡する。
 
 **GitHub Actionsの `concurrency` だけをロックとしない。** 実行待ちキューの扱いや再実行を含む永続的な一意性を保証するため、別の排他claimを設ける。GitHub Actionsは補助的な同一Issue直列化（例: `group: agent-issue-${{ github.event.issue.number }}`、`cancel-in-progress: false`）に用いる。最大3並列の実行枠管理は別途 #69。
 
@@ -84,7 +98,7 @@ run記録の最小項目：
   "schema_version": 1,
   "issue_number": 65,
   "run_id": "<GitHub Actions run ID + run attempt 等の一意なID>",
-  "request_id": "<取得・検証できた発火イベント識別子>",
+  "request_id": null,
   "actor": "<イベントを付与した認可済みアカウント>",
   "status": "running",
   "started_at": "<UTC timestamp>",
@@ -100,6 +114,7 @@ run記録の最小項目：
 }
 ```
 
+- `request_id` は発火イベントの識別子をGitHub Actionsが信頼できる形で取得できた場合だけ格納する。取れない場合は `null` とし、ロック・状態・履歴の照合を代替の安全条件として扱う（#67で実測）。
 - コメントには `<!-- agent-run:<run_id> -->` の固定マーカーを付け、再送で同一runのコメントを重複投稿しない。コメント更新には既存IDを追跡する。コメント内容は後から変更できるため、認可・排他の根拠にはしない。
 - `base_sha` は開始時に固定し、修正・再試行でも記録する。PR、実行ログ、費用・修正回数はrun IDで対応させる。PRは必ずIssueへのリンクを持つ。
 - タイムアウト・runner停止・API障害は `needs-input` の原因として残す。heartbeatの欠落だけではロックを剥がさない。
@@ -119,7 +134,7 @@ run記録の最小項目：
 ## 7. キャンセル・再着手・障害復旧
 
 1. **通常の停止**: 人間が停止を要求 → 新規起動を禁止 → 実行中のActions/Codexをキャンセル → 既存run・PRを確認 → 原因と実行回数を記録 → `needs-input` にする。停止前のロックを再利用・再解放しない。
-2. **再着手**: 原因対応、進行中のジョブがないこと、重複PRがないこと、古いclaimが安全に解放されていることを確認 → 人間が `agent:ready` を再付与 → 新しいrunを作る。前回の `repair_count` と残作業は引き継ぎ、同一PRの修正を別runとして上限回避しない。
+2. **再着手**: 原因対応、進行中のジョブがないこと、既存PRを照合したこと、古いclaimが安全に解放されていることを確認 → 人間が `agent:ready` を再付与 → 新しいrunを作る。既存PRが開いている場合はそれを引き継ぎ、新しいPRを重複作成しない。前回の `repair_count` と残作業は引き継ぎ、同一PRの修正を別runとして上限回避しない。
 3. **クラッシュ／タイムアウト**: heartbeat停止、timeout、失敗を検出 → 新規起動・自動ロック剥奪はしない → `needs-input` と障害情報を保存 → 人間がActions、PR、作業ブランチ、claim refを検査してから解放・再開する。
 4. **緊急停止**: 管理者が `AGENT_AUTORUN_ENABLED=false` に設定 → workflowの新規起動経路を無効化 → 実行中のワークフローを停止 → 権限付きトークンを必要に応じて失効 → 状況をGitHubに記録。変数変更だけでは既存runを停止しない。
 5. **ラベル変更のロールバック**: まず上記キルスイッチを無効化し稼働がないことを確認。対象Issueの変更前ラベル（GitHubのイベント履歴・監査記録）を確認し、新規に付けた `agent:*` を除去、元の状態へ戻す。ラベル定義そのものを削除する場合は全Issue・PRで未使用を確認し、影響範囲を記録する。既存runのclaimやPRブランチを**ラベルと連動して削除しない**。ロックの解除は別の安全確認とする。
