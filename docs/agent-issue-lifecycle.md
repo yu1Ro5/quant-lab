@@ -31,14 +31,14 @@
 管理者向け初期作成コマンド（**実行前に既存ラベルと衝突しないことを確認**。`--force` は使わない）：
 
 ```bash
-gh label create 'agent:ready' --color '0E8A16' --description 'Human-authorized request to start an agent run'
-gh label create 'agent:running' --color '1D76DB' --description 'Agent execution active under an exclusive claim'
-gh label create 'agent:review' --color 'FBCA04' --description 'PR pending CI, review or repair decision'
-gh label create 'agent:needs-input' --color 'D93F0B' --description 'Agent halted; human intervention is required'
-gh label create 'agent:ready-to-merge' --color '5319E7' --description 'Checks complete; human merge decision required'
+gh label create 'agent:ready' --color '0E8A16' --description 'Human-authorized request to start an agent run' --repo yu1Ro5/quant-lab
+gh label create 'agent:running' --color '1D76DB' --description 'Agent execution active under an exclusive claim' --repo yu1Ro5/quant-lab
+gh label create 'agent:review' --color 'FBCA04' --description 'PR pending CI, review or repair decision' --repo yu1Ro5/quant-lab
+gh label create 'agent:needs-input' --color 'D93F0B' --description 'Agent halted; human intervention is required' --repo yu1Ro5/quant-lab
+gh label create 'agent:ready-to-merge' --color '5319E7' --description 'Checks complete; human merge decision required' --repo yu1Ro5/quant-lab
 ```
 
-作成後は `gh label list` で確認する。初期状態ではラベルだけが存在し、自動起動するWorkflowを有効にしない。
+作成後は `gh label list --repo yu1Ro5/quant-lab` で確認する。初期状態ではラベルだけが存在し、自動起動するWorkflowを有効にしない。
 
 ## 3. 状態遷移
 
