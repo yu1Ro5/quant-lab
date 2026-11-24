@@ -1,10 +1,6 @@
 # 米国株バックテスト
 
-YAMLで Entry・Exit・Sizing を指定し、保存済み5分足Parquetから実験を再実行するバックテストの仕様です。
-
-Entry・Exit・Sizingを独立に指定して、保存済み5分足Parquetから実験を再実行できます。
-初期戦略は30分ORB、固定率の損切り/利確、固定1株です。外部API・OpenDへの接続はなく、
-すべてメモリ内の仮想取引です。旧日本株MVPの位置引数CLIと公開クラスも維持しています。
+YAMLで Entry・Exit・Sizing を指定し、保存済み5分足Parquetから実験を再実行するバックテストの仕様です。初期戦略は30分ORB、固定率の損切り/利確、固定1株。外部API・OpenDへの接続はなく、すべてメモリ内の仮想取引です。
 
 ```bash
 uv sync --locked
@@ -14,69 +10,20 @@ uv run python -m quant_lab.backtest --config configs/experiments/aapl_orb_30m.ya
 uv run python -m quant_lab.backtest --config configs/experiments/aapl_orb_30m.yaml --diagnostic
 # 全必須品質検査passのデータだけ正式評価
 uv run python -m quant_lab.backtest --config configs/experiments/aapl_orb_30m.yaml
-
-# 既存MVP
-uv run python -m quant_lab.backtest examples/data/japanese_stock_sample.parquet
 ```
 
-入力の既定パスは`data/stock/aapl_5m_2026.parquet`です。実行前に取得済みのParquetを配置してください。
-`--quality-only`の終了コードは、品質合格なら`0`、検査は完了したものの正式評価に進めない場合は`2`、
-ファイルが見つからないなど、入力の読込や処理に失敗した場合は`1`です。
-別worktreeや別ディレクトリに保存している場合は、YAMLの`data.path`をその絶対パスに変更してください。
-**入力/出力の相対パスは実行時のカレントディレクトリ基準**です。
-個人用設定や実データ入り結果はGitへ追加しないでください。例えば`results/local.yaml`へ
-設定をコピーすれば、設定も既定のGit除外ディレクトリに置けます。
+入力の既定パスは `data/stock/aapl_5m_2026.parquet` で、実行前に取得済みのParquetを配置します。入力/出力の相対パスは実行時のカレントディレクトリ基準です。終了コードを含む品質ゲートの判定条件は [5分足の品質判定](backtest-data-quality.md) を参照してください。
 
 ## 設定例と検証
 
-完全なサンプルは[configs/experiments/aapl_orb_30m.yaml](../configs/experiments/aapl_orb_30m.yaml)。
+完全なサンプルは [configs/experiments/aapl_orb_30m.yaml](../configs/experiments/aapl_orb_30m.yaml) です。
 
-```yaml
-experiment:
-  name: aapl_orb_30m
-data:
-  symbol: US.AAPL
-  path: data/stock/aapl_5m_2026.parquet
-  timeframe: 5m
-  timezone: America/New_York
-  bar_timestamp: end
-  adjustment: none
-period:
-  start: "2026-01-01"
-  end: "2026-11-18"
-entry:
-  strategy: orb
-  params:
-    opening_range_minutes: 30
-exit:
-  strategy: fixed_stop
-  params:
-    stop_loss_pct: 0.5
-    take_profit_pct: 1.0
-    close_at_market_end: true
-sizing:
-  strategy: fixed_shares
-  params:
-    shares: 1
-execution:
-  commission_usd_per_side: 0.10
-  slippage_bps_per_side: 2
-  spread_bps_per_side: 0
-portfolio:
-  initial_capital_usd: 5000
-  max_trades_per_day: 1
-output:
-  directory: results
-```
+設定は厳密に検証し、必須セクション/キーの欠落、未知キー、YAML重複キー、未知の strategy やパラメータ、型違い、NaN/Infinity、負のコスト、期間の逆転は、理由付きエラー（終了コード1）で実行前に拒否します。各項目の型・範囲の正はサンプル設定と検証テストです。特に次の規則は見落としやすいものです。
 
-必須セクション/キー、未知キー、YAML重複キー、未知strategy、未知パラメータ、型違い、
-NaN/Infinity、負のコスト、期間逆転を説明付きエラー（終了コード1）にします。
-日付は引用符付き`YYYY-MM-DD`文字列、timezoneはIANA名、足種は`5m`のみです。
-株数と1日最大取引数は1〜1,000,000の整数（boolや小数は禁止）、初期資金は正の有限値。
-ORB期間は5〜180分の5分単位、損切率は0より大きく100%未満、利確率は正の有限値。
-片道bpsの合計は10,000未満、`close_at_market_end`は当日決済を守るため`true`のみです。
-実験名は英数字・`_`・`-`の1〜100文字。`output`省略時は`results`。
-各組込戦略の`params: {}`は実装の既定値を使い、結果設定には適用した既定値も保存します。
+- 日付は引用符付き `YYYY-MM-DD` 文字列、timezone はIANA名、足種は `5m` のみ
+- `close_at_market_end` は当日決済を守るため `true` のみ
+- 各組込戦略の `params: {}` は実装の既定値を使い、結果設定には適用した既定値も保存する
+- `output` 省略時は `results`
 
 ## 責務分離と戦略の追加
 
@@ -92,23 +39,9 @@ ORB期間は5〜180分の5分単位、損切率は0より大きく100%未満、�
 | Metrics | `metrics.py` | 成績集計 |
 | Report | `report.py` | CSV/JSON/HTML出力 |
 
-新戦略ファイルを`strategies/entry/`・`strategies/exit/`・`strategies/sizing/`の
-対応するフォルダへ追加し、そのフォルダの`base.py`にあるProtocolを実装してください。
-例えば新Entryを追加したら`registry.py`へ明示的にimportし、
-`ENTRY.register("new_entry", NewEntry)`を1行追加します。
-あとはYAMLの`entry.strategy`と`params`を変更するだけで、Engine/Runnerは無改修です。
-Exit/Sizingもそれぞれ`EXIT`/`SIZING`へ登録できます。
-任意モジュール名のYAML指定、`eval`、自動探索importは行いません。
-戦略コンストラクタがパラメータの型/範囲を検証します（組込戦略は`validation.py`を共有）。
-Python APIでは`ExperimentEngine(config, entry=..., exit=..., sizing=...)`で個別注入できます。
-テスト用の戦略で個別注入とYAML registry経由の両方を自動検証しています。
+新戦略は `strategies/entry/`・`strategies/exit/`・`strategies/sizing/` の対応フォルダへ追加し、そのフォルダの `base.py` のProtocolを実装します。`registry.py` へ明示的にimportして `ENTRY.register("new_entry", NewEntry)` のように1行登録すれば、YAMLの `strategy` と `params` の変更だけで使え、Engine/Runnerは無改修です（Exit/Sizingも `EXIT`/`SIZING` へ同様）。任意モジュール名のYAML指定、`eval`、自動探索importは行いません。パラメータの型/範囲はコンストラクタが検証します（組込戦略は `validation.py` を共有）。Python APIでは `ExperimentEngine(config, entry=..., exit=..., sizing=...)` で個別注入でき、個別注入とregistry経由の両方をテストで検証しています。
 
-Entryには当日現在までの確定足と立会予定時刻だけを渡し、`session.bars`は空にします。
-Sizingには次足の始値に基づく約定予定価格を渡します。
-Exitは、足開始時点で既知の建値から設定した保護注文を評価する契約です。
-差し替えExitでも、終値を見てその足の過去の安値で売るなどの先読みは禁止です。
-状態を持つ戦略は実験ごとに新規インスタンスを使い、日付リセットも実装してください。
-Engineは具体的な戦略名やORBの数値には依存しません。
+契約上の要点: Entryには確定足と立会予定時刻だけを渡し（`session.bars` は空）、Sizingには次足始値に基づく約定予定価格を渡します。Exitは足開始時点で既知の建値から設定した保護注文を評価し、先読みは禁止です。状態を持つ戦略は実験ごとに新規インスタンスを使い、日付リセットも実装します。Engineは具体的な戦略名やORBの数値には依存しません。
 
 ## 入力時刻・立会・欠損の扱い
 
@@ -118,11 +51,7 @@ UTCへ変換し、naiveな時刻は**YAMLのtimezone**でlocalizeします。
 DSTの曖昧/存在しない時刻、重複、非有限値、欠損、非正価格、OHLC矛盾を拒否します。
 開始/終了ラベルは`bar_timestamp: start/end`で明示し、各5分区間の開始/終了へ正規化します。
 
-市場日は`exchange_calendars`の`XNYS`を使用します。
-[ライブラリのカレンダーAPI](https://github.com/gerrymanoim/exchange_calendars/blob/master/exchange_calendars/calendar_utils.py)
-から取得する立会時刻で、米国東部09:30〜16:00、DST、休日、短縮13:00などを扱います。
-実行にネット接続は不要です。将来の臨時休場・時間変更はライブラリ更新が必要になる場合があります。
-期間の開始日・終了日は東部時間の日付で両端を含みます。
+市場日は `exchange_calendars` の `XNYS` を使い、米国東部09:30〜16:00、DST、休日、短縮13:00などを扱います（[カレンダーAPI](https://github.com/gerrymanoim/exchange_calendars/blob/master/exchange_calendars/calendar_utils.py)）。実行にネット接続は不要です。将来の臨時休場・時間変更はライブラリ更新が必要になる場合があります。期間の開始日・終了日は東部時間の日付で両端を含みます。
 
 期間内の全営業日を列挙し、通常立会の足だけを使います。時間外・休日の足は警告付きで除外します。
 通常日は78本、13時終了日は42本。寄り付き6本、日中の足、最終足のいずれかに欠損がある、
@@ -179,62 +108,37 @@ OHLCVでは到達順序・板・実際のスプレッド・流動性・部分約
 | 成果物 | 内容 |
 | --- | --- |
 | `config.yaml` | 実行時確定設定。入力/出力は絶対パス、組込戦略の既定値も展開 |
-| `trades.csv` | 全取引、東部取引日、symbol、ORB High/Low、シグナル/約定時刻、株数、基準/実約定価格、決済理由、コスト前/後USD損益と内訳。ゼロ取引でもヘッダーを保存 |
+| `trades.csv` | 全取引。取引日、symbol、ORB High/Low、シグナル/約定時刻、株数、基準/実約定価格、決済理由、損益とコスト内訳。ゼロ取引でもヘッダーを保存 |
 | `metrics.json` | 取引回数、勝率、グロス/コスト/ネット、平均ネット、Profit Factor、最大DD（USDと比率）、営業日/取引日/ノートレード日/除外日、警告 |
-| `equity_curve.html` | 上部に表示項目・今回の値・分かることの3列表。Plotly内包の資産推移にコスト控除前・控除後の2本を表示。警告・除外日も表示 |
-| `quality.json` / `quality.md` | 全必須品質検査のpass/fail/unknown、入力・根拠、日別欠損・除外日、ready判定。拒否時も保存 |
-| `daily_comparison.csv` | 通常立会の集計OHLCV、日足参照、生差分・相対差。条件未確認はunknown |
-| `run_metadata.json` | UTC実行時刻、入力SHA-256/サイズ/行数、隣接metadataのSHA-256、Git commit/変更状態、実装コードのSHA-256、Python/依存バージョン、カレンダー、仮定 |
+| `equity_curve.html` | Plotly内包の資産推移（コスト控除前・後の2本）。警告・除外日も表示 |
+| `run_metadata.json` | UTC実行時刻、入力SHA-256/サイズ/行数、Git commit/変更状態、実装コードのSHA-256、Python/依存バージョン、仮定 |
 
-CLIの成功ログには、結果ディレクトリに加えて`実験結果HTML：<絶対パス>`を表示します。
-HTML上部には初期資金→最終残高、純損益、グロス損益、総コスト、取引回数、勝率、
-Profit Factor、最大ドローダウンを表示します。
-控除前の線は、控除後と同じ取引・評価時点へ発生済みコストを戻した比較系列です。
-保有中は購入時の手数料・スリッページ・スプレッドだけを戻し、売却費用は決済時に加えます。
-コストゼロで売買判断・購入余力・利確損切り水準を再計算した別実験ではありません。
-両系列は初期資金を含む確定足終値時価評価で、未発生の売却費用は含みません。
+CLIの成功ログには、結果ディレクトリに加えて実験結果HTMLの絶対パスを表示します。HTMLには初期資金→最終残高、純損益、グロス損益、総コスト、取引回数、勝率、Profit Factor、最大ドローダウンを表示し、コスト控除前/後の2系列を比較できます。控除前の系列は、控除後と同じ取引に発生済みコストを戻したもので、コストゼロで売買判断を再計算した別実験ではありません。
 
-勝率はネット損益が正の取引割合、Profit Factorはネット利益合計÷ネット損失絶対値です。
-損失ゼロならJSONの非標準Infinityを使わず`null`、`profit_factor_status`で
-`no_losses`（利益あり）または`no_trades_or_flat`を区別します。
-最大DDの比率は各時点の過去最高資産に対する低下率。ノートレード日は有効営業日のうち取引がない日で、除外日を含みません。
+指標の定義: 勝率はネット損益が正の取引の割合。Profit Factorはネット利益合計÷ネット損失絶対値で、損失ゼロなら `null` とし、`profit_factor_status` で `no_losses`（利益あり）または `no_trades_or_flat` を区別します（JSONの非標準Infinityは使いません）。最大DDの比率は各時点の過去最高資産に対する低下率で、確定足終値系列によるものとし、足内の最大逆行は含みません。ノートレード日は有効営業日のうち取引がない日で、除外日を含みません。
 
-同一の入力バイト列・設定・コード・依存関係で`trades.csv`と`metrics.json`は再現します。
-実行ID/時刻・HTML内部IDは実行ごとに異なります。入力とハッシュは同じ読込バイト列から生成します。
-未コミット開発中はGit SHAだけでコードを再現できないため、Git変更状態と実装ハッシュも確認し、
-比較に使う版のコード・lockファイルを別途保存してください。
+品質レポート（`quality.json` / `quality.md`）と `daily_comparison.csv` の内容は [5分足の品質判定](backtest-data-quality.md) を参照してください。
+
+同一の入力バイト列・設定・コード・依存関係で `trades.csv` と `metrics.json` は再現します。実行ID/時刻・HTML内部IDは実行ごとに異なります。未コミット開発中はGit SHAだけでコードを再現できないため、Git変更状態と実装ハッシュも確認し、比較に使う版のコード・lockファイルは別途保存してください。
 
 ## ORB Exit比較
 
 ```bash
 uv run --locked python -m quant_lab.backtest --compare-exits configs/comparisons/aapl_orb_exits.yaml
-# 品質未確認データの明示的な診断（正式評価には使用不可）
-uv run --locked python -m quant_lab.backtest --compare-exits configs/comparisons/aapl_orb_exits.yaml --diagnostic
+# 品質未確認データの診断は --diagnostic を追加（正式評価には使用不可）
 ```
 
-`base_config`は比較YAMLからの相対パスです。入力データと出力先のパスは既存CLI同様に実行ディレクトリ基準です。既存の単発YAML、`--config`、旧Parquet CLI、`--compare-costs`は引き続き使えます。単発でも`exit.strategy`を`fixed_stop` / `trailing_stop` / `time_exit`に変更できます。
+`base_config` は比較YAMLからの相対パス、入力データと出力先は実行ディレクトリ基準です。既存の単発YAML、`--config`、旧Parquet CLI、`--compare-costs` も引き続き使え、単発でも `exit.strategy` に `fixed_stop` / `trailing_stop` / `time_exit` を指定できます。
 
-Exit比較はYAMLに列挙した候補だけを同じExperimentEngineで実行します。候補の総当たり、Exitとコストの組合せ最適化はしません。比較専用の共通条件としてORB 30分・1株・5000 USD・1日最大1取引、Webull日本米国株モデル（委託手数料0、`fee_schedule: "2026-11-21"`、`cat_route: exchange`）、片道spread 1 bps・slippage 2 bpsを明示的に適用します。元の単発YAMLは変更せず、元設定と各実行の全有効設定を保存します。銘柄・入力全体・調整条件・約定方式は共通です。固定率候補もこの条件で再実行するため、旧条件の約−17.86 USDを比較基準にしません。
+Exit比較はYAMLに列挙した候補だけを同じ ExperimentEngine で実行します（総当たりや、Exitとコストの組合せ最適化はしません）。共通条件は ORB 30分・1株・5000 USD・1日最大1取引、Webull日本米国株モデル（委託手数料0、`fee_schedule: "2026-11-21"`、`cat_route: exchange`）、片道 spread 1 bps・slippage 2 bps。元の単発YAMLは変更せず、各実行の全有効設定を保存します。固定率候補もこの条件で再実行するため、旧条件の結果は比較基準にしません。料金は Issue #41 と同じ公表料金の固定試算で、実請求額は再現しません。仮定と公式出典は各結果に保存します。
 
-料金は#41と同じ公表料金の固定試算です。過去の実請求額を再現しません。FINRA免除の転嫁や丸め、CAT端数処理の未確認事項、USD決済と為替費用なし等の仮定は上記の料金説明と同じです。各結果にも公式出典と仮定を保存します。
+**Exitの約定規則**（価格には共通Brokerが spread・slippage・料金を適用）:
 
-**Exitの約定規則**（価格には共通Brokerがspread・slippage・料金を適用）:
+- **固定率**: 既存挙動を維持。初期候補は損切り0.5%・利確1%。始値が損切り以下なら始値で決済し、同足で利確・損切りが両方成立したら損切りを優先します
+- **トレーリング**: 初期候補は初期損切り0.5%・追従幅0.5%。実約定価格から初期ラインを置き、始値ギャップ→足内安値の順に判定します。ラインは下げず、同足の高値を過去の安値へ遡って適用しません。未決済なら当足高値で更新したラインを次足へ反映します。決済理由は `trailing_stop`
+- **時間Exit**: 損切り0.5%に加え、`max_holding_minutes`（正の5分単位）または `exit_time_et`（ETの5分境界）の一方を必須指定します。保有時間は買付実約定時刻から計測し、期限以降は最初に利用可能な足の始値で決済します（始値が損切り以下なら損切り優先）。指定時刻後の新規買付は同じ始値で即時決済し、往復費用を負担します
+- **共通**: 最終利用足まで保有した場合は最終足終値で `market_close` とし、日跨ぎしません。欠損足があるセッションは除外され、欠損価格の補間約定は行いません
 
-- 固定率は既存挙動を維持。初期候補は損切り0.5%・利確1%。始値が損切り以下なら始値。それ以外でも同足安値が損切りに達したらストップ価格を優先し、利確との同時到達も損切りとします。利確ギャップの始値より同足損切りを優先する既存の保守的仮定も維持します。
-- トレーリング初期候補は初期損切り0.5%・追従幅0.5%。建玉の実約定価格から初期ラインを置き、足開始前から有効なラインで始値ギャップ→足内安値の順に判定します。未決済の場合だけ当足高値×(1−追従幅)と旧ラインの高い方を次足へ反映します。ラインは下げず、同足高値を過去の安値に遡って適用しません。初期ラインを含め決済理由は`trailing_stop`。新しいPositionで状態を初期化します。
-- 時間Exitは損切り0.5%に加え、正の5分単位の`max_holding_minutes`またはETの5分境界`exit_time_et: "11:00"`を一方だけ必須指定します。保有時間は買付実約定時刻から計測します。足開始時点が期限以降なら最初に利用可能な足の始値で`time_exit`。始値が損切り以下なら`stop_loss`を優先し、それ以外の時間決済後はその足の将来の安値を見ません。期限前だけ足内安値のストップを判定します。指定時刻後の新規買付は同じ始値で即時決済し、往復費用を負担します（既存Entry判断を変えず、期限超過保有を防止）。
-- 全Exitで通常・短縮立会の最終利用足まで保有した場合は、保護注文・時間決済の判定後、最終足終値で`market_close`。時間期限が引けより後でも当日全決済し、日跨ぎしません。欠損足があるセッションは既存品質・セッション検証に従って除外され、欠損価格の補間約定は行いません。Exit単体では期限以降の最初の利用可能な足を評価します。
+**期間と評価の運用**: `periods.in_sample` と `periods.out_of_sample` には開始日・終了日を含む `YYYY-MM-DD` を指定し、IS終了日より後にOOSを置きます（重複・逆順は拒否）。各候補・各期間は独立した初期資金と新しい戦略インスタンスで開始し、IS/OOSは合算評価しません。OOSは候補を確定してから開き、結果を見て調整しません。なお日付分割だけではデータの未使用性は証明できません。各候補・期間で取引30件未満ならサンプル不足を警告します（30件以上でも統計的優位性は保証しません）。
 
-**期間と評価の運用**:
-
-`periods.in_sample`と`periods.out_of_sample`には、開始日・終了日を含むYYYY-MM-DDを指定し、IS終了日より後にOOSを置きます。重複・逆順は拒否します。各候補・各期間は独立した初期資金と新しい戦略インスタンスで開始し、IS/OOSを合算評価しません。OOSを開く前に候補を確定し、OOS結果を見て調整しないでください。調整した場合、その期間は以後未使用ではありません。
-
-例の2026年1月〜11月18日はすでに成績確認済みです。例のIS/OOSは構成・期間分割の例であり、「未使用データ」と認定したものではありません。真の未使用性は日付分割や品質合格からは証明できません。実際の未使用データがなくても人工OHLCVで期間分割・独立実行・出力を検証できます。各候補・期間で取引30件未満ならサンプル不足を警告します。30件以上でも統計的優位性を保証せず、過去の勝率から将来の勝率を保証しません。
-
-**出力と指標**:
-
-`results/exit_comparison_*/`に`comparison.csv`・`comparison.json`・`comparison.html`と入力・metadata・品質根拠のスナップショットを保存します。入力ハッシュを全実行で照合し、公開前に品質根拠を含むスナップショットの改変を拒否します。`runs/`の各実行には有効設定、実装ハッシュ・Git状態・入力識別、品質状態、警告、除外日、`trades.csv`（時刻・約定価格・決済理由・費用内訳）、`metrics.json`、資産推移HTML、理由別・月別CSVを保存します。比較グラフは期間別に分離し、独立した資金であることを表示します。品質未確認では正式評価を拒否し、明示した診断だけ暫定表示します。
-
-勝ちは費用控除後PnL>0、負けは<0、ゼロはどちらにも含めず勝率の分母には含めます。平均利益は勝ちのネットPnL平均、平均損失は負けのネットPnL平均（負数）、利益/損失比は平均利益÷平均損失の絶対値。該当取引なしの平均は0、損失なしの比率はJSONのnullです。PFはネット総利益÷ネット総損失の絶対値（損失なしはnullと状態を保存）。ゼロ取引の勝率・PnLは0です。グロスPnLは参照価格差×株数、ネットはグロス−委託手数料−SEC−FINRA−CAT−spread−slippage。最大ドローダウンは初期資金を含む確定足終値のネット時価資産の過去最高値からの最大下落額・率（未発生売却費用は含めない）。決済理由別・月別は取引日のET日付で集計し、それぞれ取引数・ネット勝率・グロス/費用/ネットPnLを保存します。
-
-Exit比較HTMLは、売り方の条件、主要指標の比較、期間別の累積ネット損益・ドローダウン、費用・決済理由・月別成績、折りたたみの品質・再現性情報の順に表示します。固定率との差は固定率候補が一つある場合だけ算出します。HTMLだけを更新する場合は、`quant_lab.backtest.exit_report.write_exit_html(directory, document['results'], document)`へ保存済み`comparison.json`の内容を渡せます。Engineの再実行やCSV/JSONの変更は行いません。
+**出力と指標**: `results/exit_comparison_*/` に `comparison.csv`・`comparison.json`・`comparison.html` と、入力・metadata・品質根拠のスナップショットを保存します。入力ハッシュは全実行で照合します。`runs/` の各実行には有効設定、識別情報、品質状態、除外日と、`trades.csv`、`metrics.json`、資産推移HTML、理由別・月別CSVを保存します。指標の基本定義は「結果と再現性」と同じで、比較では次が加わります。勝ちは費用控除後PnL>0、負けは<0、ゼロはどちらにも含めず勝率の分母には含めます。ネットPnLはグロス−委託手数料−SEC−FINRA−CAT−spread−slippage。理由別・月別集計は取引日のET日付で行います。
