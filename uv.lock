@@ -870,7 +870,7 @@ requires-dist = [
     { name = "kaleido", specifier = ">=1.0" },
     { name = "moomoo-api", specifier = ">=10.12.7208" },
     { name = "numpy", specifier = ">=2.5.1" },
-    { name = "pandas", specifier = ">=2.3.0" },
+    { name = "pandas", specifier = ">=3.0.0" },
     { name = "plotly", specifier = ">=6.1.1" },
     { name = "pyarrow", specifier = ">=20.0.0" },
     { name = "pyyaml", specifier = ">=6.0.2" },

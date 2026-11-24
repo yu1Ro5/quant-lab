@@ -1,6 +1,7 @@
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import cast
 
 import numpy as np
 import pandas as pd
@@ -71,7 +72,7 @@ class ValidateDataTests(unittest.TestCase):
 
     def test_rejects_duplicate_datetimes(self) -> None:
         data = valid_data()
-        data.loc[1, "datetime"] = data.loc[0, "datetime"]
+        data.at[1, "datetime"] = cast(pd.Timestamp, data.at[0, "datetime"])
         with self.assertRaisesRegex(DataValidationError, "重複"):
             validate_data(data)
 
