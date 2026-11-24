@@ -134,3 +134,39 @@ API仕様の根拠:
 実データ取得後に、この手順を再実行可能な取得モジュールへまとめ、ページング、
 権限エラー、接続失敗、DST、祝日・短縮日、欠損・重複・不正OHLCV、Parquet読戻しの
 テストを追加する。mockによるテスト成功と実データ取得成功は区別する。
+
+## 利用方針
+
+米国株データの取得・開発支援には、用途に応じて次を使い分けます。これは運用方針であり、既存のデータ取得処理やバックテストをMCPへ置き換えるものではありません。
+
+| 用途 | 使用するもの | 役割 |
+| --- | --- | --- |
+| 大量の履歴データ取得 | Python SDK + OpenD | 取得枠・頻度制限・ページングを管理し、再現可能な入力データを用意する |
+| API調査・コード生成 | 公式 `moomooapi` Skill | API仕様・引数・サンプルを参照し、SDKを使うコードの開発を支援する |
+| 少量の相場情報の直接照会 | 公式MCP | AIエージェントからローソク足などを読み取り専用で照会する |
+| 5分足バックテスト・ORB開発 | SDKで取得したOHLCV + バックテストコード | 時刻・取引セッション・価格調整条件を揃えたデータで検証する。Skillsは実装支援に使う |
+
+### MacとCodex Cloudの利用範囲
+
+Macでは、ログイン済みの既存OpenD（`127.0.0.1:11111`）とPython SDKを使用します。SkillsはAPI資料と実行スクリプトを提供し、相場取得スクリプトはSDK経由でOpenDへ接続します。一方、MCPはOAuthで認証するリモートAPIであり、MacのOpenDを経由しません。
+
+Macのユーザー設定はリポジトリに含めません。
+
+
+Codex CloudにはMacのSkills・MCP設定・認証状態は引き継がれません。Cloudの `127.0.0.1` はCloud自身を指すため、MacのOpenDには接続できません。Cloudでは人工データやモックを用いて、取得後の処理とバックテストを開発・検証します。MCPをCloudから使用する構成は、別途設定・認証・接続確認が必要であり、現時点では未検証です。
+
+### 読み取り専用での利用
+
+MCPのOAuthスコープは `quote:read` のみに限定し、`quote:write`、`trade:read`、`trade:write` は許可しません。Codex側でも、確認済みの読み取り専用相場ツールだけを `enabled_tools` で許可します。ツール一覧に注文用ツールが表示されることと、その操作権限があることは別です。
+
+公式Skillsには注文用コードとOpenDのインストール手順も含まれます。MCPのスコープ制限はSDKには適用されないため、Skillsでは相場取得だけを指定し、本番・模擬のいずれも注文の送信・訂正・取消や取引のアンロックを行いません。既存OpenD・SDKの再インストールや初期化も行いません。
+
+APIキー、OAuthトークン、パスワード、実取得データはGitへコミットしません。取得データを比較するときは、銘柄・日付・時間帯・価格調整条件・出来高の単位を揃え、取得できなかった項目は未検証として扱います。
+
+公式資料：
+
+- [moomoo OpenD Skills](https://openapi.moomoo.com/moomoo-api-doc/jp/intro/ai.html)
+- [moomoo MCP概要](https://open.moomoo.com/mcp-docs/overview)
+- [moomoo MCP認証・スコープ](https://open.moomoo.com/mcp-docs/authentication)
+- [Codex Skills](https://developers.openai.com/codex/skills/)
+- [Codex MCP設定](https://developers.openai.com/codex/mcp/)

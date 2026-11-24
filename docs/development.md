@@ -36,7 +36,7 @@ CIは全単体テストを実行し、skipが1件でもあれば失敗する。�
 
 - SDK/OpenD呼び出し、引数、ページング、取引セッション指定、応答の変換、時刻・価格調整・出来高単位の解釈を変更した場合は、Macの既存OpenDで実機確認する。
 - 文書のみ、人工データで完結する計算・表示など、接続契約や実データの解釈に影響しない変更では実接続は不要。PRに判断理由を記載する。
-- 実機確認では銘柄・期間・時間帯・調整条件・取得件数と検証結果を記録する。認証情報、個人設定、実取得データはPRやGitへ含めない。利用方針は [README](../README.md#moomooによる米国株データ取得の利用方針) とAGENTS.mdに従う。
+- 実機確認では銘柄・期間・時間帯・調整条件・取得件数と検証結果を記録する。認証情報、個人設定、実取得データはPRやGitへ含めない。利用方針は [moomoo OpenAPI動作確認](moomoo-openapi-verification.md#利用方針) とAGENTS.mdに従う。
 - 実機確認が必要なのに接続先・権限・取得枠がない場合、mockの成功で代替完了しない。ローカルで可能な検証まで進め、PRをDraftにして未検証項目とMacでの確認手順・再開条件を記載する。注文や取引認証情報で解決しない。
 
 ## レビューとマージ判断
@@ -57,3 +57,25 @@ CIは全単体テストを実行し、skipが1件でもあれば失敗する。�
 | [GitHub CLI: gh pr create](https://cli.github.com/manual/gh_pr_create) | `--fill`はcommit情報による補完。必要な本文は`--body-file`等で明示する | 本文で確認できず |
 
 全資料の確認日: 2026-11-23。確認日を公開日・更新日とは扱わない。これらは一般的な運用指針であり、検証コマンドや実機確認条件はこのリポジトリのCI・接続契約に合わせた方針である。
+
+## テストの構成
+
+外部API不要のE2E検証は`uv run python -m unittest tests.backtest.test_experiment_e2e -v`。
+固定の人工OHLCVを一時Parquetへ保存し、YAMLから実際のCLIプロセスを起動して、
+取引・期待損益・5種類の成果物・再実行時の再現性を確認します。部品のモックは使用しません。
+ゼロ取引のCLI検証も維持しています。
+
+テストは`tests/backtest/`内で次のように分離しています。
+
+- `fixtures.py`：共通の人工OHLCV・設定・実コンポーネント実行ヘルパー
+- `test_experiment_config.py`：YAML設定検証
+- `test_intraday_engine.py`：時系列・建玉管理・部品連携
+- `test_entry.py` / `test_exit.py` / `test_sizing.py`：各戦略
+- `test_execution.py`：仮想約定・コスト・現金
+- `test_sessions.py`：立会・DST・時刻ラベル・欠損データ
+- `test_registry.py`：戦略登録と差し替え
+- `test_experiment_metrics.py`：実験の成績集計
+- `test_runner.py`：結果保存・入力識別・品質警告
+- `test_experiment_e2e.py`：CLIから成果物までの一気通貫検証
+
+既存MVPのテストも維持しています。全テストは`uv run python -m unittest discover -v`で実行します。
