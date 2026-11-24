@@ -4,6 +4,7 @@ import warnings
 
 import exchange_calendars as xcals  # type: ignore[import-untyped]
 import pandas as pd
+from pandas.errors import Pandas4Warning
 
 from .config import ExperimentConfig
 from .data import DataValidationError, validate_data
@@ -48,6 +49,10 @@ def prepare_sessions(data: pd.DataFrame, config: ExperimentConfig) -> PreparedDa
     # カレンダー生成の端に休場日のみが指定されても正しく空の期間にできる。
     with warnings.catch_warnings():
         warnings.simplefilter("error")
+        # pandas 3.1 で exchange_calendars 内部の Series.values が出す
+        # Pandas4Warning のみ対象を絞って除外する（pandas 4 対応版の
+        # exchange_calendars が出たらこの除外は外す）。
+        warnings.filterwarnings("ignore", category=Pandas4Warning)
         try:
             calendar = xcals.get_calendar(
                 "XNYS",
