@@ -197,7 +197,7 @@ Entry・Exit・Sizingを独立に指定して、保存済み5分足Parquetから
 
 ```bash
 uv sync --locked
-# 品質検証のみ。現在のAAPLは未検証項目があるため終了コード2
+# 品質検証のみ。入力Parquetが必要
 uv run python -m quant_lab.backtest --config configs/experiments/aapl_orb_30m.yaml --quality-only
 # 暫定値の診断再現（正式評価ではない）
 uv run python -m quant_lab.backtest --config configs/experiments/aapl_orb_30m.yaml --diagnostic
@@ -208,7 +208,9 @@ uv run python -m quant_lab.backtest --config configs/experiments/aapl_orb_30m.ya
 uv run python -m quant_lab.backtest examples/data/japanese_stock_sample.parquet
 ```
 
-入力の既定パスは`data/stock/aapl_5m_2026.parquet`。
+入力の既定パスは`data/stock/aapl_5m_2026.parquet`です。実行前に取得済みのParquetを配置してください。
+`--quality-only`の終了コードは、品質合格なら`0`、検査は完了したものの正式評価に進めない場合は`2`、
+ファイルが見つからないなど、入力の読込や処理に失敗した場合は`1`です。
 別worktreeや別ディレクトリに保存している場合は、YAMLの`data.path`をその絶対パスに変更してください。
 **入力/出力の相対パスは実行時のカレントディレクトリ基準**です。
 個人用設定や実データ入り結果はGitへ追加しないでください。例えば`results/local.yaml`へ
@@ -418,15 +420,7 @@ Profit Factor、最大ドローダウンを表示します。
 
 ## テストと検証
 
-外部APIとSlackはmockし、標準ライブラリの `unittest` を使います。
-
-```bash
-uv run python -m unittest discover -v
-uv run python -m compileall -q .
-uv run ruff check .
-uv run mypy .
-git diff --check
-```
+ローカルでの検証コマンドとCIの判定条件は、[開発・検証ガイド](docs/development.md#ciとローカル検証)を参照してください。
 
 ### ORB Exit比較（Issue #39）
 
